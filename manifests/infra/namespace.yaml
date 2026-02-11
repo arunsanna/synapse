@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm-infra
+  labels:
+    name: llm-infra
+    purpose: centralized-llm-inference
+    app.kubernetes.io/part-of: synapse

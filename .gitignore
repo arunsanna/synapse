@@ -1,0 +1,16 @@
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Secrets (never commit)
+*.secret.yaml
+*-secret.yaml
+.env
+.env.*
+
+# Temp
+*.tmp
+*.bak

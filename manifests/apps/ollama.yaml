@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: llm-infra
+  labels:
+    app: ollama
+    app.kubernetes.io/part-of: synapse
+    app.kubernetes.io/component: cpu-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+        app.kubernetes.io/part-of: synapse
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          env:
+            # Keep models loaded indefinitely (196GB RAM allows it)
+            - name: OLLAMA_KEEP_ALIVE
+              value: "-1"
+            # Concurrent requests per model (32-core CPU can handle 8)
+            - name: OLLAMA_NUM_PARALLEL
+              value: "8"
+            # Max models loaded simultaneously (conservative start per DA-5)
+            - name: OLLAMA_MAX_LOADED_MODELS
+              value: "2"
+            # CPU thread utilization
+            - name: OLLAMA_NUM_THREADS
+              value: "32"
+            # Model storage path
+            - name: OLLAMA_MODELS
+              value: "/models"
+            # CPU-only: no GPU allocation for this deployment
+            - name: CUDA_VISIBLE_DEVICES
+              value: ""
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          ports:
+            - containerPort: 11434
+              name: http
+          resources:
+            requests:
+              memory: 32Gi
+              cpu: 8
+            limits:
+              memory: 96Gi
+              cpu: 32
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 11434
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 11434
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: llm-infra
+  labels:
+    app: ollama
+    app.kubernetes.io/part-of: synapse
+spec:
+  selector:
+    app: ollama
+  ports:
+    - port: 11434
+      targetPort: 11434
+      name: http
+  type: ClusterIP
