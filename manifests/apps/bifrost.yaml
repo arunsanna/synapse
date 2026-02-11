@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-gateway
+  namespace: llm-infra
+  labels:
+    app: bifrost-gateway
+    app.kubernetes.io/part-of: synapse
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bifrost-gateway
+  template:
+    metadata:
+      labels:
+        app: bifrost-gateway
+        app.kubernetes.io/part-of: synapse
+    spec:
+      containers:
+        - name: bifrost
+          image: maximhq/bifrost:v1.4.5
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: "0.1"
+            limits:
+              memory: 256Mi
+              cpu: "1"
+          # Bifrost stores provider config in /app/data
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        # emptyDir: config is re-applied via configure-gateway.sh after restarts
+        # Switch to PVC if you want persistence across pod restarts
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bifrost-gateway
+  namespace: llm-infra
+  labels:
+    app: bifrost-gateway
+    app.kubernetes.io/part-of: synapse
+spec:
+  selector:
+    app: bifrost-gateway
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  type: ClusterIP

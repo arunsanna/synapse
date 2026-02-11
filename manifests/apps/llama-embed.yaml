@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-embed
+  namespace: llm-infra
+  labels:
+    app: llama-embed
+    app.kubernetes.io/part-of: synapse
+    app.kubernetes.io/component: embeddings
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llama-embed
+  template:
+    metadata:
+      labels:
+        app: llama-embed
+        app.kubernetes.io/part-of: synapse
+    spec:
+      initContainers:
+        # Download GGUF model on first deploy, skip if already cached
+        - name: download-model
+          image: curlimages/curl:8.12.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              MODEL_DIR="/models/embeddings"
+              MODEL_FILE="$MODEL_DIR/mxbai-embed-large-v1-f16.gguf"
+              mkdir -p "$MODEL_DIR"
+              if [ ! -f "$MODEL_FILE" ]; then
+                echo "Downloading mxbai-embed-large-v1 F16 GGUF (~670MB)..."
+                curl -L --progress-bar -o "$MODEL_FILE" \
+                  "https://huggingface.co/ChristianAzinn/mxbai-embed-large-v1-gguf/resolve/main/mxbai-embed-large-v1-f16.gguf"
+                echo "Download complete."
+              else
+                echo "Model already cached, skipping download."
+              fi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      containers:
+        - name: llama-server
+          image: ghcr.io/ggml-org/llama.cpp:server
+          # TODO: Pin to specific version when available (rolling :server tag)
+          args:
+            - --model
+            - /models/embeddings/mxbai-embed-large-v1-f16.gguf
+            - --embedding
+            - --pooling
+            - cls
+            - --port
+            - "8081"
+            - --host
+            - "0.0.0.0"
+            - --ctx-size
+            - "512"
+            - --batch-size
+            - "512"
+          ports:
+            - containerPort: 8081
+              name: http
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 2
+            limits:
+              memory: 4Gi
+              cpu: 8
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: synapse-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-embed
+  namespace: llm-infra
+  labels:
+    app: llama-embed
+    app.kubernetes.io/part-of: synapse
+spec:
+  selector:
+    app: llama-embed
+  ports:
+    - port: 8081
+      targetPort: 8081
+      name: http
+  type: ClusterIP
