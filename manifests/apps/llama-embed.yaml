@@ -26,12 +26,12 @@ spec:
           args:
             - |
               MODEL_DIR="/models/embeddings"
-              MODEL_FILE="$MODEL_DIR/mxbai-embed-large-v1-f16.gguf"
+              MODEL_FILE="$MODEL_DIR/mxbai-embed-large-v1_fp16.gguf"
               mkdir -p "$MODEL_DIR"
               if [ ! -f "$MODEL_FILE" ]; then
-                echo "Downloading mxbai-embed-large-v1 F16 GGUF (~670MB)..."
+                echo "Downloading mxbai-embed-large-v1 FP16 GGUF (~670MB)..."
                 curl -L --progress-bar -o "$MODEL_FILE" \
-                  "https://huggingface.co/ChristianAzinn/mxbai-embed-large-v1-gguf/resolve/main/mxbai-embed-large-v1-f16.gguf"
+                  "https://huggingface.co/ChristianAzinn/mxbai-embed-large-v1-gguf/resolve/main/mxbai-embed-large-v1_fp16.gguf"
                 echo "Download complete."
               else
                 echo "Model already cached, skipping download."
@@ -45,7 +45,7 @@ spec:
           # TODO: Pin to specific version when available (rolling :server tag)
           args:
             - --model
-            - /models/embeddings/mxbai-embed-large-v1-f16.gguf
+            - /models/embeddings/mxbai-embed-large-v1_fp16.gguf
             - --embedding
             - --pooling
             - cls

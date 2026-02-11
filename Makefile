@@ -30,12 +30,12 @@ deploy-embed: ## Deploy llama-server embeddings (CPU)
 deploy-gateway: ## Deploy Bifrost gateway
 	$(KUBECTL) apply -f manifests/apps/bifrost.yaml
 
-configure-gateway: ## Configure Bifrost to route to backends
+configure-gateway: ## Validate Bifrost gateway configuration
 	./scripts/configure-gateway.sh
 
 deploy-phase1: deploy-infra deploy-embed deploy-gateway ## Deploy Phase 1 (embeddings + gateway)
 	@echo ""
-	@echo "Phase 1 deployed. Run 'make configure-gateway' after pods are ready."
+	@echo "Phase 1 deployed. Bifrost config is baked into ConfigMap — no post-deploy step needed."
 
 # === Legacy (Ollama/LiteLLM — kept for reference) ===
 
