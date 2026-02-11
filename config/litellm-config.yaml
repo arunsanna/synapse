@@ -17,7 +17,7 @@ model_list:
   - model_name: llama3.1-8b
     litellm_params:
       model: openai/meta-llama/Meta-Llama-3.1-8B-Instruct
-      api_base: http://vllm.llm-infra.svc.cluster.local:8001/v1
+      api_base: http://vllm-inference.llm-infra.svc.cluster.local:8001/v1
       order: 1 # GPU primary
 
   - model_name: llama3.1-8b
@@ -30,7 +30,7 @@ model_list:
   - model_name: llama3.1-70b
     litellm_params:
       model: openai/meta-llama/Meta-Llama-3.1-70B-Instruct
-      api_base: http://vllm.llm-infra.svc.cluster.local:8001/v1
+      api_base: http://vllm-inference.llm-infra.svc.cluster.local:8001/v1
 
   # === STT → Speaches (faster-whisper, NOT vLLM Whisper) ===
   - model_name: whisper-large-v3

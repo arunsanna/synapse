@@ -22,22 +22,19 @@ spec:
         - name: ollama
           image: ollama/ollama:latest
           env:
-            # Keep models loaded indefinitely (196GB RAM allows it)
+            # Keep models loaded indefinitely (avoids reload latency)
             - name: OLLAMA_KEEP_ALIVE
               value: "-1"
-            # Concurrent requests per model (32-core CPU can handle 8)
+            # Concurrent requests per model (adjust to your CPU core count)
             - name: OLLAMA_NUM_PARALLEL
               value: "8"
-            # Max models loaded simultaneously (conservative start per DA-5)
+            # Max models loaded simultaneously (adjust to available RAM)
             - name: OLLAMA_MAX_LOADED_MODELS
               value: "2"
-            # CPU thread utilization
-            - name: OLLAMA_NUM_THREADS
-              value: "32"
             # Model storage path
             - name: OLLAMA_MODELS
               value: "/models"
-            # CPU-only: no GPU allocation for this deployment
+            # CPU-only mode: disable GPU access
             - name: CUDA_VISIBLE_DEVICES
               value: ""
           volumeMounts:
@@ -46,6 +43,7 @@ spec:
           ports:
             - containerPort: 11434
               name: http
+          # Adjust resource limits to match your node capacity
           resources:
             requests:
               memory: 32Gi

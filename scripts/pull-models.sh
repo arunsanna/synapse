@@ -1,32 +1,47 @@
 #!/usr/bin/env bash
 # Pre-pull models into Ollama for instant availability
+#
+# Usage:
+#   ./scripts/pull-models.sh                    # Pull default models
+#   ./scripts/pull-models.sh model1 model2      # Pull specific models
+#
+# Environment:
+#   SYNAPSE_NAMESPACE  Kubernetes namespace (default: llm-infra)
+#   KUBECTL_CMD        kubectl command (default: kubectl)
+
 set -euo pipefail
 
-NAMESPACE="llm-infra"
-KUBECTL="sudo kubectl"
+NAMESPACE="${SYNAPSE_NAMESPACE:-llm-infra}"
+KUBECTL="${KUBECTL_CMD:-kubectl}"
 
-OLLAMA_POD=$($KUBECTL -n "$NAMESPACE" get pod -l app=ollama -o jsonpath='{.items[0].metadata.name}')
+OLLAMA_POD=$($KUBECTL -n "$NAMESPACE" get pod -l app=ollama -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
 if [ -z "$OLLAMA_POD" ]; then
-  echo "ERROR: No Ollama pod found in $NAMESPACE"
+  echo "ERROR: No Ollama pod found in $NAMESPACE namespace"
+  echo "Deploy Ollama first: make deploy-ollama"
   exit 1
 fi
 
-echo "=== Pulling models into Ollama ==="
+# Default models if none specified
+if [ $# -eq 0 ]; then
+  MODELS=(
+    "mxbai-embed-large"   # Embeddings (~1GB)
+    "llama3.1:8b"         # Small LLM (~5GB)
+  )
+else
+  MODELS=("$@")
+fi
 
-# Phase 1 models
-MODELS=(
-  "mxbai-embed-large"   # Embeddings (~1GB)
-  "llama3.1:8b"         # Small LLM fallback (~5GB)
-)
+echo "=== Pulling models into Ollama ==="
+echo "Pod: $OLLAMA_POD"
+echo ""
 
 for model in "${MODELS[@]}"; do
-  echo ""
   echo "--- Pulling: $model ---"
   $KUBECTL -n "$NAMESPACE" exec "$OLLAMA_POD" -- ollama pull "$model"
-  echo "✓ $model pulled"
+  echo "$model: OK"
+  echo ""
 done
 
-echo ""
 echo "=== All models pulled ==="
 $KUBECTL -n "$NAMESPACE" exec "$OLLAMA_POD" -- ollama list

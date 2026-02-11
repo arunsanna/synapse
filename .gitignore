@@ -1,9 +1,12 @@
 # OS
 .DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # Secrets (never commit)
 *.secret.yaml
@@ -11,6 +14,14 @@
 .env
 .env.*
 
+# Internal docs (not for public repo)
+CLAUDE.md
+
 # Temp
 *.tmp
 *.bak
+*.log
+
+# Helm
+charts/*/charts/
+*.tgz
