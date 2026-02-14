@@ -9,6 +9,7 @@ metadata:
 data:
   config.json: |
     {
+      "$schema": "https://www.getbifrost.ai/schema",
       "providers": {
         "llama-embed": {
           "keys": [
@@ -25,6 +26,13 @@ data:
           "custom_provider_config": {
             "base_provider_type": "openai"
           }
+        }
+      },
+      "config_store": {
+        "enabled": true,
+        "type": "sqlite",
+        "config": {
+          "path": "/app/data/store/config.db"
         }
       }
     }
@@ -51,7 +59,7 @@ spec:
     spec:
       containers:
         - name: bifrost
-          image: maximhq/bifrost:v1.4.5
+          image: maximhq/bifrost:v1.4.6
           ports:
             - containerPort: 8080
               name: http
@@ -67,6 +75,8 @@ spec:
               mountPath: /app/data/config.json
               subPath: config.json
               readOnly: true
+            - name: store
+              mountPath: /app/data/store
           readinessProbe:
             httpGet:
               path: /health
@@ -83,6 +93,8 @@ spec:
         - name: config
           configMap:
             name: bifrost-config
+        - name: store
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
