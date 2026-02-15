@@ -1,0 +1,51 @@
+# Synapse — Backend Registry
+# Deployed as ConfigMap, mounted at /config/backends.yaml in the gateway pod.
+# Replaces config/litellm-config.yaml (LiteLLM cancelled).
+
+backends:
+  # --- LLM ---
+  llama-embed:
+    url: http://llama-embed.llm-infra.svc.cluster.local:8081
+    type: openai-compatible
+    health: /health
+
+  # vllm:
+  #   url: http://vllm-inference.llm-infra.svc.cluster.local:8001
+  #   type: openai-compatible
+  #   health: /health
+
+  # ollama:
+  #   url: http://ollama.llm-infra.svc.cluster.local:11434
+  #   type: ollama
+  #   health: /api/tags
+
+  # --- Speech (Phase 1: TTS only) ---
+  chatterbox-tts:
+    url: http://chatterbox-tts.llm-infra.svc.cluster.local:8004
+    type: chatterbox
+    health: /api/ui/initial-data
+
+  # --- Phase 2: STT ---
+  whisper-stt:
+    url: http://whisper-stt.llm-infra.svc.cluster.local:8000
+    type: faster-whisper
+    health: /health
+
+  # --- Phase 3: Speaker + Audio ---
+  pyannote-speaker:
+    url: http://pyannote-speaker.llm-infra.svc.cluster.local:8000
+    type: pyannote
+    health: /health
+
+  deepfilter-audio:
+    url: http://deepfilter-audio.llm-infra.svc.cluster.local:8000
+    type: deepfilter
+    health: /health
+
+routes:
+  # /v1/chat/completions: ollama
+  /v1/embeddings: llama-embed
+  /tts/*: chatterbox-tts
+  /stt/*: whisper-stt
+  /speakers/*: pyannote-speaker
+  /audio/*: deepfilter-audio
