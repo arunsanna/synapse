@@ -5,237 +5,282 @@
 <h1 align="center">Synapse</h1>
 
 <p align="center">
-  <strong>Centralized LLM Inference Gateway for Kubernetes</strong><br>
-  Intelligent routing between Ollama, vLLM, and TTS/STT services — one OpenAI-compatible API
+  <strong>Unified AI Gateway — TTS, STT, Speaker Analysis, Audio Processing, and Embeddings through a single endpoint</strong>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://kubernetes.io"><img src="https://img.shields.io/badge/kubernetes-%3E%3D1.26-326CE5?logo=kubernetes&logoColor=white" alt="Kubernetes"></a>
-  <a href="https://github.com/BerriAI/litellm"><img src="https://img.shields.io/badge/gateway-LiteLLM-orange" alt="LiteLLM"></a>
-  <a href="https://ollama.com"><img src="https://img.shields.io/badge/backend-Ollama-black" alt="Ollama"></a>
-  <a href="https://github.com/vllm-project/vllm"><img src="https://img.shields.io/badge/backend-vLLM-purple" alt="vLLM"></a>
+  <a href="https://fastapi.tiangolo.com"><img src="https://img.shields.io/badge/gateway-FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
+  <a href="https://www.python.org"><img src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11"></a>
 </p>
 
 ---
 
 ## What is Synapse?
 
-Synapse is a **unified LLM inference gateway** that sits in front of multiple AI backends and provides a single OpenAI-compatible API. It intelligently routes requests to the best backend based on model type, hardware availability, and load.
+Synapse is a **custom FastAPI gateway** (~400 lines) that provides a single endpoint for all AI services running on an on-prem K3s cluster. Instead of managing separate APIs for text-to-speech, speech-to-text, speaker analysis, audio processing, and embeddings, Synapse routes every request to the right backend through one unified URL: `https://synapse.arunlabs.com`.
 
-**The problem:** Running local LLM infrastructure means juggling multiple services — Ollama for CPU inference, vLLM for GPU acceleration, separate TTS/STT servers — each with different APIs, ports, and configurations.
+The gateway handles voice library management (storing reference WAV samples on a PVC for zero-shot voice cloning), circuit breakers per backend, health aggregation, and request proxying — all without third-party gateway dependencies. Configuration is a single `backends.yaml` file that maps routes to backend URLs.
 
-**The solution:** Synapse gives all your applications one endpoint. It handles routing, fallback, load balancing, and model lifecycle behind the scenes.
-
-```
-┌────────────────────────────┐
-│  Your Applications         │
-│  (Agents, Chatbots, Apps)  │
-└──────────┬─────────────────┘
-           │ OpenAI-compatible API
-┌──────────▼─────────────────┐
-│  Synapse (LiteLLM Router)  │
-│  Routing / Fallback / Logs │
-└──┬───────────┬──────────┬──┘
-   │           │          │
-┌──▼───┐  ┌───▼──┐  ┌────▼───┐
-│Ollama│  │ vLLM │  │TTS/STT │
-│(CPU) │  │(GPU) │  │Services│
-└──────┘  └──────┘  └────────┘
-```
+All 5 backends and 17 endpoints are deployed and verified end-to-end.
 
 ## Features
 
-- **Unified API** — One OpenAI-compatible endpoint for all inference backends
-- **Intelligent Routing** — Automatically routes to the optimal backend per model
-- **Automatic Fallback** — GPU overloaded? Falls back to CPU inference transparently
-- **Multi-Backend** — Supports Ollama, vLLM, and any OpenAI-compatible service
-- **TTS/STT Support** — Routes speech-to-text and text-to-speech alongside LLM inference
-- **Kubernetes Native** — Deploys as standard K8s manifests in a single namespace
-- **Observable** — Prometheus metrics, Grafana dashboards, alerting rules included
-- **Phased Deployment** — Start with Ollama only, add GPU backends when ready
+- **Zero-shot voice cloning** — Upload a 6-second WAV sample to clone any voice via Chatterbox Turbo (350M params)
+- **23 languages** — TTS supports en, de, es, fr, hi, it, ja, ko, nl, pl, pt, ru, tr, zh, ar, cs, da, fi, hu, nb, ro, sv, uk
+- **Speech-to-text with word timestamps** — faster-whisper with Whisper large-v3-turbo (int8 quantized)
+- **Streaming transcription** — Server-Sent Events for real-time STT segment delivery
+- **Speaker diarization** — Identify who spoke when with pyannote.audio 3.1
+- **Speaker verification** — Compare two audio samples to confirm speaker identity
+- **Audio denoising** — Background noise removal via DeepFilterNet3
+- **Format conversion** — WAV, MP3, FLAC, OGG conversion via ffmpeg
+- **Embeddings** — snowflake-arctic-embed2 via llama-embed (1024 dimensions)
+- **Circuit breakers** — Per-backend failure isolation (5 failures = 30s cooldown)
+- **Health aggregation** — Single `/health` endpoint reports status of all backends
+- **Voice library** — PVC-backed voice reference storage with upload, list, and delete
+- **Simple configuration** — One `backends.yaml` file maps routes to backend URLs
 
 ## Architecture
 
-| Component            | Role                                               | Runs On    |
-| -------------------- | -------------------------------------------------- | ---------- |
-| **LiteLLM Proxy**    | API gateway, routing, fallback, logging            | CPU        |
-| **Ollama**           | CPU inference, embeddings, fallback for GPU models | CPU        |
-| **vLLM**             | High-performance GPU inference for large models    | GPU        |
-| **TTS/STT Services** | Speech-to-text (Whisper), text-to-speech           | CPU or GPU |
+```
+┌──────────────────────────────────────┐
+│  Clients                             │
+│  (Voice agents, Apps, curl)          │
+└──────────────────┬───────────────────┘
+                   │ HTTPS
+┌──────────────────▼───────────────────┐
+│  Synapse Gateway (FastAPI, port 8000)│
+│  Routing · Circuit Breakers · Voices │
+└──┬──────┬──────┬──────┬──────┬───────┘
+   │      │      │      │      │
+┌──▼──┐┌──▼──┐┌──▼──┐┌──▼──┐┌──▼──┐
+│Embed││ TTS ││ STT ││Spkr ││Audio│
+│     ││     ││     ││     ││     │
+│llama││Chat-││whis-││pyan-││Deep-│
+│embed││ box ││ per ││note ││Fltr │
+└─────┘└─────┘└─────┘└─────┘└─────┘
+```
 
-### Routing Logic
+| Component            | Role                                               | Model                         | Device |
+| -------------------- | -------------------------------------------------- | ----------------------------- | ------ |
+| **Synapse Gateway**  | Request routing, voice library, health aggregation | —                             | CPU    |
+| **llama-embed**      | Text embeddings (1024 dims)                        | snowflake-arctic-embed2       | CPU    |
+| **Chatterbox TTS**   | Text-to-speech, voice cloning                      | Chatterbox Turbo (350M)       | CPU    |
+| **whisper-stt**      | Speech-to-text, language detection                 | Whisper large-v3-turbo (int8) | CPU    |
+| **pyannote-speaker** | Speaker diarization + verification                 | pyannote 3.1                  | CPU    |
+| **deepfilter-audio** | Noise reduction + format conversion                | DeepFilterNet3 + ffmpeg       | CPU    |
 
-| Request Type      | Primary Backend | Fallback     |
-| ----------------- | --------------- | ------------ |
-| Embeddings        | Ollama (CPU)    | —            |
-| Small LLMs (7-8B) | vLLM (GPU)      | Ollama (CPU) |
-| Large LLMs (70B+) | vLLM (GPU)      | —            |
-| Speech-to-Text    | STT service     | —            |
-| Text-to-Speech    | TTS service     | —            |
+> **Note:** All backends currently run on CPU. The RTX 5090 (Blackwell, sm_120) is not yet supported by stable PyTorch. Once sm_120 kernels ship, Chatterbox will move to GPU.
 
 ## Quick Start
 
-### Prerequisites
-
-- Kubernetes cluster (K3s, Kind, Minikube, EKS, GKE, etc.)
-- `kubectl` configured with cluster access
-- NVIDIA GPU + [device plugin](https://github.com/NVIDIA/k8s-device-plugin) (for vLLM — optional for Phase 1)
-
-### Phase 1: Ollama Only (No GPU Required)
-
-Deploy a centralized Ollama instance with CPU inference:
+### Health Check
 
 ```bash
-# Create namespace and storage
-kubectl apply -f manifests/infra/
-
-# Deploy Ollama
-kubectl apply -f manifests/apps/ollama.yaml
-
-# Pull models
-./scripts/pull-models.sh
-
-# Verify
-./scripts/health-check.sh
+curl https://synapse.arunlabs.com/health
 ```
 
-Your applications can now point to `http://ollama.llm-infra.svc.cluster.local:11434` using the standard OpenAI-compatible API.
+### Text-to-Speech
 
-### Phase 2+: Add GPU Backend & Gateway
+```bash
+curl -X POST https://synapse.arunlabs.com/tts/synthesize \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello from Synapse", "language": "en"}' \
+  --output speech.wav
+```
 
-See the [Deployment Guide](docs/DEPLOYMENT.md) for the full phased rollout including vLLM, LiteLLM router, and TTS/STT services.
+### Voice Cloning
+
+```bash
+# 1. Upload a voice reference (WAV, minimum 6 seconds of speech)
+curl -X POST https://synapse.arunlabs.com/voices \
+  -F "name=narrator" \
+  -F "files=@sample.wav"
+# Returns: {"voice_id": "a1b2c3d4-...", ...}
+
+# 2. Synthesize with the cloned voice
+curl -X POST https://synapse.arunlabs.com/tts/synthesize \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello from Synapse", "voice_id": "a1b2c3d4-...", "language": "en"}' \
+  --output cloned.wav
+```
+
+### Speech-to-Text
+
+```bash
+curl -X POST https://synapse.arunlabs.com/stt/transcribe \
+  -F "file=@recording.wav" \
+  -F "language=en" \
+  -F "word_timestamps=true"
+```
+
+### Speaker Diarization
+
+```bash
+curl -X POST https://synapse.arunlabs.com/speakers/diarize \
+  -F "file=@meeting.wav" \
+  -F "min_speakers=2" \
+  -F "max_speakers=5"
+```
+
+### Speaker Verification
+
+```bash
+curl -X POST https://synapse.arunlabs.com/speakers/verify \
+  -F "file1=@sample_a.wav" \
+  -F "file2=@sample_b.wav"
+```
+
+### Audio Denoising
+
+```bash
+curl -X POST https://synapse.arunlabs.com/audio/denoise \
+  -F "file=@noisy.wav" \
+  --output clean.wav
+```
+
+### Embeddings
+
+```bash
+curl -X POST https://synapse.arunlabs.com/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"model": "snowflake-arctic-embed2:latest", "input": "test text"}'
+```
+
+## API Reference
+
+All 17 endpoints:
+
+| Method   | Path                      | Description                                     | Backend          |
+| -------- | ------------------------- | ----------------------------------------------- | ---------------- |
+| `GET`    | `/health`                 | Aggregated health of all backends               | Gateway          |
+| `GET`    | `/voices`                 | List all voices in library                      | Gateway (local)  |
+| `POST`   | `/voices`                 | Upload voice reference samples                  | Gateway (local)  |
+| `POST`   | `/voices/{id}/references` | Add references to existing voice                | Gateway (local)  |
+| `DELETE` | `/voices/{id}`            | Delete a voice                                  | Gateway (local)  |
+| `POST`   | `/tts/synthesize`         | Synthesize speech (with optional voice cloning) | Chatterbox TTS   |
+| `POST`   | `/tts/stream`             | Stream TTS audio                                | Chatterbox TTS   |
+| `POST`   | `/tts/interpolate`        | Blend multiple voices and synthesize            | Chatterbox TTS   |
+| `GET`    | `/tts/languages`          | List supported TTS languages                    | Gateway (static) |
+| `POST`   | `/stt/transcribe`         | Full audio transcription                        | whisper-stt      |
+| `POST`   | `/stt/detect-language`    | Detect spoken language                          | whisper-stt      |
+| `POST`   | `/stt/stream`             | Stream transcription segments (SSE)             | whisper-stt      |
+| `POST`   | `/speakers/diarize`       | Speaker diarization (who spoke when)            | pyannote-speaker |
+| `POST`   | `/speakers/verify`        | Speaker verification (same person?)             | pyannote-speaker |
+| `POST`   | `/audio/denoise`          | Remove background noise                         | deepfilter-audio |
+| `POST`   | `/audio/convert`          | Convert audio format                            | deepfilter-audio |
+| `POST`   | `/v1/embeddings`          | Generate text embeddings                        | llama-embed      |
+
+See the [API Reference](docs/API.md) for full request/response schemas, error codes, and code examples, or the [Integration Guide](docs/INTEGRATION-GUIDE.md) for end-to-end workflows.
 
 ## Configuration
 
-### Ollama (CPU Backend)
+### backends.yaml
 
-Key environment variables in `manifests/apps/ollama.yaml`:
-
-| Variable                   | Default    | Description                                     |
-| -------------------------- | ---------- | ----------------------------------------------- |
-| `OLLAMA_KEEP_ALIVE`        | `-1`       | How long to keep models loaded (`-1` = forever) |
-| `OLLAMA_NUM_PARALLEL`      | `8`        | Concurrent requests per model                   |
-| `OLLAMA_MAX_LOADED_MODELS` | `2`        | Max models in memory simultaneously             |
-| `OLLAMA_NUM_THREADS`       | `0` (auto) | CPU threads for inference                       |
-
-### LiteLLM Router
-
-Edit `config/litellm-config.yaml` to define your routing rules:
+The gateway reads a single YAML file that maps routes to backend URLs:
 
 ```yaml
-model_list:
-  # Route embedding requests to Ollama
-  - model_name: mxbai-embed-large
-    litellm_params:
-      model: ollama/mxbai-embed-large
-      api_base: http://ollama.llm-infra.svc.cluster.local:11434
+backends:
+  llama-embed:
+    url: http://llama-embed.llm-infra.svc.cluster.local:8081
+    type: openai-compatible
+    health: /health
+  chatterbox-tts:
+    url: http://chatterbox-tts.llm-infra.svc.cluster.local:8004
+    type: chatterbox
+    health: /api/ui/initial-data
+  whisper-stt:
+    url: http://whisper-stt.llm-infra.svc.cluster.local:8000
+    type: faster-whisper
+    health: /health
+  pyannote-speaker:
+    url: http://pyannote-speaker.llm-infra.svc.cluster.local:8000
+    type: pyannote
+    health: /health
+  deepfilter-audio:
+    url: http://deepfilter-audio.llm-infra.svc.cluster.local:8000
+    type: deepfilter
+    health: /health
 
-  # Route LLM requests to vLLM (primary) with Ollama fallback
-  - model_name: llama3.1-8b
-    litellm_params:
-      model: openai/meta-llama/Meta-Llama-3.1-8B-Instruct
-      api_base: http://vllm-inference.llm-infra.svc.cluster.local:8001/v1
-      order: 1 # Try GPU first
-
-  - model_name: llama3.1-8b
-    litellm_params:
-      model: ollama/llama3.1:8b
-      api_base: http://ollama.llm-infra.svc.cluster.local:11434
-      order: 2 # CPU fallback
+routes:
+  /v1/embeddings: llama-embed
+  /tts/*: chatterbox-tts
+  /stt/*: whisper-stt
+  /speakers/*: pyannote-speaker
+  /audio/*: deepfilter-audio
 ```
 
-### Resource Tuning
+### Environment Variables
 
-Adjust resource limits in the manifests to match your hardware:
+| Variable                      | Default                 | Description                       |
+| ----------------------------- | ----------------------- | --------------------------------- |
+| `SYNAPSE_GATEWAY_CONFIG_PATH` | `/config/backends.yaml` | Path to backend registry          |
+| `SYNAPSE_VOICE_LIBRARY_DIR`   | `/data/voices`          | Voice reference storage directory |
+| `SYNAPSE_LOG_LEVEL`           | `INFO`                  | Logging level                     |
 
-```yaml
-# manifests/apps/ollama.yaml
-resources:
-  requests:
-    memory: 32Gi # Minimum for 1 loaded model
-    cpu: 8
-  limits:
-    memory: 96Gi # Adjust based on available RAM
-    cpu: 32 # Adjust based on available cores
-```
+## Deployment
+
+Synapse deploys to a K3s cluster in the `llm-infra` namespace. Images are pushed to `registry.arunlabs.com`.
+
+### Makefile Targets
+
+| Target                | Description                                          |
+| --------------------- | ---------------------------------------------------- |
+| `make deploy`         | Deploy all services (infra + all backends + gateway) |
+| `make deploy-phase1`  | Deploy gateway + embeddings + TTS only               |
+| `make deploy-stt`     | Deploy whisper-stt backend                           |
+| `make deploy-speaker` | Deploy pyannote-speaker backend                      |
+| `make deploy-audio`   | Deploy deepfilter-audio backend                      |
+| `make build-gateway`  | Build and push gateway image                         |
+| `make test-health`    | Health check all services                            |
+| `make test-tts`       | Test TTS synthesis endpoint                          |
+| `make show-routes`    | Display all registered routes                        |
+| `make logs`           | Tail logs from all services                          |
+| `make status`         | Show all pods in namespace                           |
+| `make validate`       | Dry-run validate all manifests                       |
+| `make clean`          | Remove all Synapse resources (destructive)           |
 
 ## Project Structure
 
 ```
 synapse/
+├── gateway/                  # Custom FastAPI gateway
+│   ├── src/
+│   │   ├── main.py           # App entrypoint, health aggregation
+│   │   ├── config.py         # backends.yaml loader
+│   │   ├── backend_client.py # HTTP client with circuit breaker + retries
+│   │   ├── models.py         # Pydantic request/response models
+│   │   ├── voice_manager.py  # Voice library CRUD (PVC-backed)
+│   │   ├── router_tts.py     # TTS routes (Chatterbox two-step proxy)
+│   │   ├── router_stt.py     # STT routes (faster-whisper proxy)
+│   │   ├── router_speaker.py # Speaker routes (pyannote proxy)
+│   │   ├── router_audio.py   # Audio routes (DeepFilterNet proxy)
+│   │   └── router_llm.py     # Embeddings route (llama-embed proxy)
+│   ├── Dockerfile            # python:3.11-slim, no ML dependencies
+│   └── requirements.txt
+├── config/
+│   └── backends.yaml         # Backend registry + route mapping
 ├── manifests/
-│   ├── infra/              # Namespace, PVCs, ConfigMaps
-│   ├── apps/               # Deployments + Services
-│   └── monitoring/         # Prometheus rules, ServiceMonitors
-├── config/                 # LiteLLM routing configuration
-├── scripts/                # Deployment helpers, health checks
-├── monitoring/
-│   ├── dashboards/         # Grafana JSON dashboards
-│   └── alerts/             # Alertmanager rules
-└── docs/                   # Architecture docs, deployment guide
+│   ├── infra/                # Namespace, PVCs, ingress
+│   └── apps/                 # Deployment + Service for each backend
+├── scripts/                  # Health checks, test helpers
+├── docs/
+│   ├── API.md                   # Full API reference (17 endpoints)
+│   ├── INTEGRATION-GUIDE.md     # Workflow-oriented integration guide
+│   ├── synapse-architecture.png # Architecture diagram
+│   ├── tts-request-flow.png     # Voice cloning flow diagram
+│   ├── api-route-map.png        # API endpoints visual map
+│   └── archive/                 # Legacy docs (BUILD-PLAN, DEPLOYMENT, etc.)
+├── Makefile
+└── LICENSE
 ```
 
-## Deployment Phases
+## Documentation
 
-Synapse is designed for incremental rollout. Start simple, add complexity when needed.
-
-| Phase | What                                             | GPU Required? | Complexity |
-| ----- | ------------------------------------------------ | ------------- | ---------- |
-| **1** | Centralized Ollama (CPU inference + embeddings)  | No            | Low        |
-| **2** | Add vLLM (GPU inference for large models)        | Yes           | Medium     |
-| **3** | Add LiteLLM gateway (unified routing + fallback) | No            | Medium     |
-| **4** | Add TTS/STT services (speech workloads)          | Optional      | Medium     |
-| **5** | Monitoring stack (Prometheus + Grafana)          | No            | Low        |
-| **6** | Decommission per-app instances, consolidate      | No            | Low        |
-
-## Design Principles
-
-1. **Start simple** — Ollama alone covers 80% of use cases. Only add vLLM/LiteLLM when you need more performance.
-2. **CPU-first fallback** — Every GPU model should have a CPU fallback path. GPU failures shouldn't break your apps.
-3. **One namespace** — All inference services live in `llm-infra` for simplified operations.
-4. **OpenAI-compatible** — All backends expose the OpenAI API format. Swap backends without changing application code.
-5. **Observable** — If you can't measure it, you can't manage it. Metrics, dashboards, and alerts are first-class.
-
-## Monitoring
-
-Synapse includes pre-built monitoring for:
-
-- **LiteLLM**: Request rates, latency percentiles, fallback events, backend health
-- **vLLM**: Tokens/second, TTFT, queue depth, model state (hot/warm/cold)
-- **GPU**: VRAM usage, utilization %, temperature, power draw (via DCGM Exporter)
-- **Ollama**: Active models, CPU usage, memory consumption
-
-See `monitoring/` for Grafana dashboards and Prometheus alert rules.
-
-## FAQ
-
-**Q: Do I need a GPU?**
-No. Phase 1 runs entirely on CPU with Ollama. GPU is only needed for vLLM (Phase 2+).
-
-**Q: Can I use this without Kubernetes?**
-The manifests are K8s-native, but the architecture works with Docker Compose too (contributions welcome).
-
-**Q: What models are supported?**
-Any model supported by Ollama or vLLM. Ollama supports GGUF models, vLLM supports native HuggingFace models.
-
-**Q: How does GPU sharing work?**
-vLLM Sleep Mode offloads model weights to CPU RAM when idle, freeing VRAM for other services. LiteLLM coordinates which backend handles each request.
-
-**Q: What about security?**
-For production, add Kubernetes NetworkPolicies (only the gateway should reach backends) and API key authentication on LiteLLM. See the [Deployment Guide](docs/DEPLOYMENT.md).
-
-## Contributing
-
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-Areas where help is especially appreciated:
-
-- Helm chart for parameterized deployment
-- Docker Compose alternative
-- Additional backend integrations (SGLang, TensorRT-LLM)
-- Grafana dashboard improvements
-- Documentation and examples
+- **[API Reference](docs/API.md)** — Full endpoint specs, request/response schemas, error codes, and code examples (curl, Python, TypeScript)
+- **[Integration Guide](docs/INTEGRATION-GUIDE.md)** — End-to-end workflows: voice cloning, meeting transcription, speaker verification, audio processing
+- **[Architecture Diagram](docs/synapse-architecture.png)** — Visual overview of the gateway and backends
 
 ## License
 

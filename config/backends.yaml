@@ -1,6 +1,6 @@
 # Synapse — Backend Registry
 # Deployed as ConfigMap, mounted at /config/backends.yaml in the gateway pod.
-# Replaces config/litellm-config.yaml (LiteLLM cancelled).
+# Mounted as ConfigMap at /config/backends.yaml in the gateway pod.
 
 backends:
   # --- LLM ---

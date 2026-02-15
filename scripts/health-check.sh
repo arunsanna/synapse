@@ -2,10 +2,12 @@
 # Health check for all Synapse services
 set -euo pipefail
 
+BASE_URL="${SYNAPSE_URL:-https://synapse.arunlabs.com}"
 NAMESPACE="${SYNAPSE_NAMESPACE:-llm-infra}"
 KUBECTL="${KUBECTL_CMD:-kubectl}"
 
 echo "=== Synapse Health Check ==="
+echo "URL: $BASE_URL"
 echo "Namespace: $NAMESPACE"
 echo ""
 
@@ -27,41 +29,14 @@ echo "--- Services ---"
 $KUBECTL get svc -n "$NAMESPACE"
 echo ""
 
-# Test Ollama
-echo "--- Ollama Health ---"
-if $KUBECTL -n "$NAMESPACE" get deploy/ollama &>/dev/null; then
-  OLLAMA_POD=$($KUBECTL -n "$NAMESPACE" get pod -l app=ollama -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-  if [ -n "$OLLAMA_POD" ]; then
-    if $KUBECTL -n "$NAMESPACE" exec "$OLLAMA_POD" -- curl -sf http://localhost:11434/ >/dev/null 2>&1; then
-      echo "Ollama: OK"
-    else
-      echo "Ollama: FAIL (not responding)"
-    fi
-    echo "Loaded models:"
-    $KUBECTL -n "$NAMESPACE" exec "$OLLAMA_POD" -- curl -sf http://localhost:11434/api/tags 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "  (none or error)"
-  else
-    echo "WARN: No Ollama pod running"
-  fi
-else
-  echo "SKIP: Ollama not deployed"
-fi
-echo ""
+# Test gateway health endpoint (aggregates all backends)
+echo "--- Gateway Health ---"
+HEALTH=$(curl -sf "$BASE_URL/health" 2>/dev/null) || true
 
-# Test LiteLLM
-echo "--- LiteLLM Health ---"
-if $KUBECTL -n "$NAMESPACE" get deploy/litellm-proxy &>/dev/null; then
-  LITELLM_POD=$($KUBECTL -n "$NAMESPACE" get pod -l app=litellm-proxy -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-  if [ -n "$LITELLM_POD" ]; then
-    if $KUBECTL -n "$NAMESPACE" exec "$LITELLM_POD" -- curl -sf http://localhost:8000/health >/dev/null 2>&1; then
-      echo "LiteLLM: OK"
-    else
-      echo "LiteLLM: FAIL (not responding)"
-    fi
-  else
-    echo "WARN: No LiteLLM pod running"
-  fi
+if [ -n "$HEALTH" ]; then
+  echo "$HEALTH" | python3 -m json.tool 2>/dev/null || echo "$HEALTH"
 else
-  echo "SKIP: LiteLLM not deployed"
+  echo "FAIL: Gateway unreachable at $BASE_URL"
 fi
 
 echo ""
