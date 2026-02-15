@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: synapse-gateway-config
+  namespace: llm-infra
+  labels:
+    app: synapse-gateway
+    app.kubernetes.io/part-of: synapse
+data:
+  backends.yaml: |
+    # Synapse backend registry — mounted at /config/backends.yaml
+    backends:
+      llama-embed:
+        url: http://llama-embed.llm-infra.svc.cluster.local:8081
+        type: openai-compatible
+        health: /health
+
+      chatterbox-tts:
+        url: http://chatterbox-tts.llm-infra.svc.cluster.local:8004
+        type: chatterbox
+        health: /api/ui/initial-data
+
+      whisper-stt:
+        url: http://whisper-stt.llm-infra.svc.cluster.local:8000
+        type: faster-whisper
+        health: /health
+
+      pyannote-speaker:
+        url: http://pyannote-speaker.llm-infra.svc.cluster.local:8000
+        type: pyannote
+        health: /health
+
+      deepfilter-audio:
+        url: http://deepfilter-audio.llm-infra.svc.cluster.local:8000
+        type: deepfilter
+        health: /health
+
+    routes:
+      /v1/embeddings: llama-embed
+      /tts/*: chatterbox-tts
+      /stt/*: whisper-stt
+      /speakers/*: pyannote-speaker
+      /audio/*: deepfilter-audio
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synapse-gateway
+  namespace: llm-infra
+  labels:
+    app: synapse-gateway
+    app.kubernetes.io/part-of: synapse
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: synapse-gateway
+  template:
+    metadata:
+      labels:
+        app: synapse-gateway
+        app.kubernetes.io/part-of: synapse
+    spec:
+      containers:
+        - name: gateway
+          image: registry.arunlabs.com/synapse-gateway:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: SYNAPSE_GATEWAY_CONFIG_PATH
+              value: /config/backends.yaml
+            - name: SYNAPSE_VOICE_LIBRARY_DIR
+              value: /data/voices
+            - name: SYNAPSE_LOG_LEVEL
+              value: INFO
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: "0.5"
+            limits:
+              memory: 1Gi
+              cpu: "2"
+          volumeMounts:
+            - name: config
+              mountPath: /config/backends.yaml
+              subPath: backends.yaml
+              readOnly: true
+            - name: voices
+              mountPath: /data/voices
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: synapse-gateway-config
+        - name: voices
+          persistentVolumeClaim:
+            claimName: synapse-voices
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-gateway
+  namespace: llm-infra
+  labels:
+    app: synapse-gateway
+    app.kubernetes.io/part-of: synapse
+spec:
+  selector:
+    app: synapse-gateway
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http
+  type: ClusterIP
