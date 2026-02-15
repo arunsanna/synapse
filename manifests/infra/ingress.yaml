@@ -17,9 +17,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: bifrost-gateway
+                name: synapse-gateway
                 port:
-                  number: 8080
+                  number: 8000
   tls:
     - hosts:
         - synapse.arunlabs.com

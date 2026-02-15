@@ -2,6 +2,8 @@
 
 > Centralized LLM Inference Gateway for ArunLabs Forge K3s Cluster
 
+> **UPDATE (2026-02-14)**: Phase 3 (LiteLLM) is **cancelled** and Phase 4 (Speaches/Piper) is **replaced**. A custom FastAPI gateway now handles all routing (LLM + speech). See **[UNIFIED-GATEWAY-PLAN.md](UNIFIED-GATEWAY-PLAN.md)** for the current execution plan. Phases 1, 2, and 5 below remain valid.
+
 ---
 
 ## Table of Contents
@@ -378,9 +380,11 @@ sudo kubectl -n llm-infra wait --for=condition=ready pod -l app=vllm-inference -
 
 ---
 
-### Phase 3: LiteLLM Gateway
+### Phase 3: ~~LiteLLM Gateway~~ — CANCELLED
 
-**Goal**: Deploy the unified routing proxy so all consumers use a single OpenAI-compatible endpoint. Enables model routing, fallback, and future model swaps without consumer changes.
+> **CANCELLED (2026-02-14)**: Replaced by custom FastAPI gateway. See `docs/UNIFIED-GATEWAY-PLAN.md` for the new plan. LiteLLM was overkill for a single-user cluster — a ~400-line custom gateway handles LLM + speech routing without the memory leaks, CronJob restarts, or third-party dependency.
+
+~~**Goal**: Deploy the unified routing proxy so all consumers use a single OpenAI-compatible endpoint. Enables model routing, fallback, and future model swaps without consumer changes.~~
 
 #### 3.1 Files to Create
 
@@ -530,9 +534,11 @@ curl http://litellm-proxy.llm-infra.svc.cluster.local:8000/v1/models
 
 ---
 
-### Phase 4: TTS/STT Services
+### Phase 4: ~~TTS/STT Services (Speaches + Piper)~~ — REPLACED
 
-**Goal**: Add speech services behind the gateway.
+> **REPLACED (2026-02-14)**: Speaches and Piper TTS are replaced by Chatterbox Turbo (TTS with voice cloning), faster-whisper (STT), pyannote (speaker analysis), and DeepFilterNet (audio processing). See `docs/UNIFIED-GATEWAY-PLAN.md` Phases 1-3 for the new speech backend architecture.
+
+~~**Goal**: Add speech services behind the gateway.~~
 
 #### 4.1 Files to Create
 
