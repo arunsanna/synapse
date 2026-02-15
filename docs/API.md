@@ -28,6 +28,14 @@ Unified AI gateway for LLM, speech, and audio services.
 
 ---
 
+## API Versioning
+
+- `/v1/embeddings` uses the `/v1/` prefix because it follows the OpenAI-compatible API convention.
+- All other endpoints (TTS, STT, speakers, audio) are custom and unversioned.
+- The gateway does not currently enforce API versioning.
+
+---
+
 ## Health
 
 ### GET /health
@@ -175,32 +183,27 @@ curl -X POST https://synapse.arunlabs.com/voices \
 ```python
 import requests
 
-files = [
-    ("files", ("sample1.wav", open("sample1.wav", "rb"), "audio/wav")),
-    ("files", ("sample2.wav", open("sample2.wav", "rb"), "audio/wav")),
-]
-resp = requests.post(
-    "https://synapse.arunlabs.com/voices",
-    data={"name": "narrator"},
-    files=files,
-)
+with open("sample1.wav", "rb") as f1, open("sample2.wav", "rb") as f2:
+    files = [
+        ("files", ("sample1.wav", f1, "audio/wav")),
+        ("files", ("sample2.wav", f2, "audio/wav")),
+    ]
+    resp = requests.post(
+        "https://synapse.arunlabs.com/voices",
+        data={"name": "narrator"},
+        files=files,
+    )
 voice = resp.json()
 print(voice["voice_id"])
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const form = new FormData();
 form.append("name", "narrator");
-form.append(
-  "files",
-  new Blob([await Deno.readFile("sample1.wav")]),
-  "sample1.wav",
-);
-form.append(
-  "files",
-  new Blob([await Deno.readFile("sample2.wav")]),
-  "sample2.wav",
-);
+form.append("files", new Blob([fs.readFileSync("sample1.wav")]), "sample1.wav");
+form.append("files", new Blob([fs.readFileSync("sample2.wav")]), "sample2.wav");
 
 const resp = await fetch("https://synapse.arunlabs.com/voices", {
   method: "POST",
@@ -257,19 +260,22 @@ curl -X POST https://synapse.arunlabs.com/voices/a1b2c3d4-.../references \
 ```python
 import requests
 
-files = [("files", ("extra.wav", open("extra_sample.wav", "rb"), "audio/wav"))]
-resp = requests.post(
-    "https://synapse.arunlabs.com/voices/a1b2c3d4-.../references",
-    files=files,
-)
+with open("extra_sample.wav", "rb") as f:
+    files = [("files", ("extra.wav", f, "audio/wav"))]
+    resp = requests.post(
+        "https://synapse.arunlabs.com/voices/a1b2c3d4-.../references",
+        files=files,
+    )
 print(resp.json()["references_count"])
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const form = new FormData();
 form.append(
   "files",
-  new Blob([await Deno.readFile("extra_sample.wav")]),
+  new Blob([fs.readFileSync("extra_sample.wav")]),
   "extra_sample.wav",
 );
 
@@ -424,6 +430,8 @@ with open("cloned.wav", "wb") as f:
 ```
 
 ```typescript
+import fs from "node:fs";
+
 // Default voice
 const resp = await fetch("https://synapse.arunlabs.com/tts/synthesize", {
   method: "POST",
@@ -434,8 +442,7 @@ const resp = await fetch("https://synapse.arunlabs.com/tts/synthesize", {
     speed: 1.0,
   }),
 });
-const audio = await resp.arrayBuffer();
-await Deno.writeFile("speech.wav", new Uint8Array(audio));
+fs.writeFileSync("speech.wav", Buffer.from(await resp.arrayBuffer()));
 
 // Voice cloning
 const cloned = await fetch("https://synapse.arunlabs.com/tts/synthesize", {
@@ -446,7 +453,7 @@ const cloned = await fetch("https://synapse.arunlabs.com/tts/synthesize", {
     voice_id: "a1b2c3d4-...",
   }),
 });
-await Deno.writeFile("cloned.wav", new Uint8Array(await cloned.arrayBuffer()));
+fs.writeFileSync("cloned.wav", Buffer.from(await cloned.arrayBuffer()));
 ```
 
 ---
@@ -498,13 +505,14 @@ with open("streamed.wav", "wb") as f:
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const resp = await fetch("https://synapse.arunlabs.com/tts/stream", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ text: "Streaming test", language: "en" }),
 });
-const audio = await resp.arrayBuffer();
-await Deno.writeFile("streamed.wav", new Uint8Array(audio));
+fs.writeFileSync("streamed.wav", Buffer.from(await resp.arrayBuffer()));
 ```
 
 ---
@@ -580,6 +588,8 @@ with open("interpolated.wav", "wb") as f:
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const resp = await fetch("https://synapse.arunlabs.com/tts/interpolate", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -593,10 +603,7 @@ const resp = await fetch("https://synapse.arunlabs.com/tts/interpolate", {
     speed: 1.0,
   }),
 });
-await Deno.writeFile(
-  "interpolated.wav",
-  new Uint8Array(await resp.arrayBuffer()),
-);
+fs.writeFileSync("interpolated.wav", Buffer.from(await resp.arrayBuffer()));
 ```
 
 ---
@@ -722,10 +729,12 @@ for seg in result["segments"]:
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const form = new FormData();
 form.append(
   "file",
-  new Blob([await Deno.readFile("recording.wav")]),
+  new Blob([fs.readFileSync("recording.wav")]),
   "recording.wav",
 );
 form.append("language", "en");
@@ -792,10 +801,12 @@ print(f"Detected: {result['detected_language']} ({result['probability']:.0%})")
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const form = new FormData();
 form.append(
   "file",
-  new Blob([await Deno.readFile("recording.wav")]),
+  new Blob([fs.readFileSync("recording.wav")]),
   "recording.wav",
 );
 
@@ -865,10 +876,12 @@ for line in resp.iter_lines(decode_unicode=True):
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const form = new FormData();
 form.append(
   "file",
-  new Blob([await Deno.readFile("recording.wav")]),
+  new Blob([fs.readFileSync("recording.wav")]),
   "recording.wav",
 );
 form.append("language", "en");
@@ -953,12 +966,10 @@ for seg in result["segments"]:
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const form = new FormData();
-form.append(
-  "file",
-  new Blob([await Deno.readFile("meeting.wav")]),
-  "meeting.wav",
-);
+form.append("file", new Blob([fs.readFileSync("meeting.wav")]), "meeting.wav");
 form.append("min_speakers", "2");
 form.append("max_speakers", "5");
 
@@ -1018,11 +1029,12 @@ curl -X POST https://synapse.arunlabs.com/speakers/verify \
 ```python
 import requests
 
-files = {
-    "file1": ("sample_a.wav", open("sample_a.wav", "rb"), "audio/wav"),
-    "file2": ("sample_b.wav", open("sample_b.wav", "rb"), "audio/wav"),
-}
-resp = requests.post("https://synapse.arunlabs.com/speakers/verify", files=files)
+with open("sample_a.wav", "rb") as f1, open("sample_b.wav", "rb") as f2:
+    files = {
+        "file1": ("sample_a.wav", f1, "audio/wav"),
+        "file2": ("sample_b.wav", f2, "audio/wav"),
+    }
+    resp = requests.post("https://synapse.arunlabs.com/speakers/verify", files=files)
 result = resp.json()
 if result["is_same_speaker"]:
     print(f"Same speaker (score: {result['similarity_score']:.2f})")
@@ -1031,15 +1043,17 @@ else:
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const form = new FormData();
 form.append(
   "file1",
-  new Blob([await Deno.readFile("sample_a.wav")]),
+  new Blob([fs.readFileSync("sample_a.wav")]),
   "sample_a.wav",
 );
 form.append(
   "file2",
-  new Blob([await Deno.readFile("sample_b.wav")]),
+  new Blob([fs.readFileSync("sample_b.wav")]),
   "sample_b.wav",
 );
 
@@ -1102,10 +1116,12 @@ with open("denoised.wav", "wb") as f:
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const form = new FormData();
 form.append(
   "file",
-  new Blob([await Deno.readFile("noisy_recording.wav")]),
+  new Blob([fs.readFileSync("noisy_recording.wav")]),
   "noisy.wav",
 );
 
@@ -1113,7 +1129,7 @@ const resp = await fetch("https://synapse.arunlabs.com/audio/denoise", {
   method: "POST",
   body: form,
 });
-await Deno.writeFile("denoised.wav", new Uint8Array(await resp.arrayBuffer()));
+fs.writeFileSync("denoised.wav", Buffer.from(await resp.arrayBuffer()));
 ```
 
 ---
@@ -1167,8 +1183,10 @@ with open("output.mp3", "wb") as f:
 ```
 
 ```typescript
+import fs from "node:fs";
+
 const form = new FormData();
-form.append("file", new Blob([await Deno.readFile("input.wav")]), "input.wav");
+form.append("file", new Blob([fs.readFileSync("input.wav")]), "input.wav");
 form.append("output_format", "mp3");
 form.append("sample_rate", "44100");
 form.append("bitrate", "192k");
@@ -1177,7 +1195,7 @@ const resp = await fetch("https://synapse.arunlabs.com/audio/convert", {
   method: "POST",
   body: form,
 });
-await Deno.writeFile("output.mp3", new Uint8Array(await resp.arrayBuffer()));
+fs.writeFileSync("output.mp3", Buffer.from(await resp.arrayBuffer()));
 ```
 
 ---
@@ -1265,22 +1283,40 @@ console.log(`Dimensions: ${data.data[0].embedding.length}`); // 1024
 
 ## Error Reference
 
-| HTTP Code | Meaning               | Typical Cause                                                            |
-| --------- | --------------------- | ------------------------------------------------------------------------ |
-| 200       | Success               | Request completed normally                                               |
-| 201       | Created               | Voice created via `POST /voices`                                         |
-| 400       | Bad Request           | Invalid input, wrong file count, file too large, unsupported format      |
-| 404       | Not Found             | Voice ID does not exist                                                  |
-| 500       | Internal Server Error | Backend processing failure (model error, unexpected exception)           |
-| 502       | Bad Gateway           | Backend returned an unexpected response (e.g., Chatterbox upload failed) |
-| 503       | Service Unavailable   | Backend unreachable or circuit breaker open                              |
-| 504       | Gateway Timeout       | Backend did not respond within the configured timeout                    |
+| HTTP Code | Meaning               | Typical Cause                                                               |
+| --------- | --------------------- | --------------------------------------------------------------------------- |
+| 200       | Success               | Request completed normally                                                  |
+| 201       | Created               | Voice created via `POST /voices`                                            |
+| 400       | Bad Request           | Invalid input, wrong file count, file too large, unsupported format         |
+| 404       | Not Found             | Voice ID does not exist                                                     |
+| 422       | Validation Error      | Request failed FastAPI validation (e.g., text too long, speed out of range) |
+| 500       | Internal Server Error | Backend processing failure (model error, unexpected exception)              |
+| 502       | Bad Gateway           | Backend returned an unexpected response (e.g., Chatterbox upload failed)    |
+| 503       | Service Unavailable   | Backend unreachable or circuit breaker open                                 |
+| 504       | Gateway Timeout       | Backend did not respond within the configured timeout                       |
 
-All error responses return JSON:
+**Gateway errors** (503, 504, 500) return:
 
 ```json
 {
-  "detail": "Human-readable error message"
+  "error": "Backend unavailable",
+  "detail": "Connection refused"
+}
+```
+
+The `error` field is a short category (`"Backend unavailable"`, `"Backend timeout"`, `"Internal server error"`) and `detail` contains the specific error message.
+
+**FastAPI validation errors** (422) return:
+
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "text"],
+      "msg": "ensure this value has at most 5000 characters",
+      "type": "value_error"
+    }
+  ]
 }
 ```
 
@@ -1298,6 +1334,8 @@ The gateway implements a per-backend circuit breaker to prevent cascading failur
 | Retry attempts    | 3 per request                                                |
 | Retry strategy    | Exponential backoff: 0.5s, 1s, 2s                            |
 | Retry scope       | Connection errors only (not HTTP error responses)            |
+
+**Important**: Both retries and circuit breaker failures are triggered exclusively by connection-level errors (`ConnectError`, `ConnectTimeout`). An HTTP 500 from a backend is **not** treated as a failure — the circuit breaker records it as a success (the backend is reachable). This means a backend returning 500 errors will never trip the circuit breaker; only network-level failures (connection refused, DNS errors, timeouts) will.
 
 **State transitions**:
 

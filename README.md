@@ -19,7 +19,7 @@
 
 ## What is Synapse?
 
-Synapse is a **custom FastAPI gateway** (~400 lines) that provides a single endpoint for all AI services running on an on-prem K3s cluster. Instead of managing separate APIs for text-to-speech, speech-to-text, speaker analysis, audio processing, and embeddings, Synapse routes every request to the right backend through one unified URL: `https://synapse.arunlabs.com`.
+Synapse is a **custom FastAPI gateway** (~1,500 lines) that provides a single endpoint for all AI services running on an on-prem K3s cluster. Instead of managing separate APIs for text-to-speech, speech-to-text, speaker analysis, audio processing, and embeddings, Synapse routes every request to the right backend through one unified URL: `https://synapse.arunlabs.com`.
 
 The gateway handles voice library management (storing reference WAV samples on a PVC for zero-shot voice cloning), circuit breakers per backend, health aggregation, and request proxying — all without third-party gateway dependencies. Configuration is a single `backends.yaml` file that maps routes to backend URLs.
 
@@ -80,6 +80,8 @@ All 5 backends and 17 endpoints are deployed and verified end-to-end.
 ```bash
 curl https://synapse.arunlabs.com/health
 ```
+
+> **Tip:** Visit `https://synapse.arunlabs.com/docs` for interactive API documentation (Swagger UI), or `https://synapse.arunlabs.com/dashboard` for a live status dashboard.
 
 ### Text-to-Speech
 
@@ -176,48 +178,15 @@ See the [API Reference](docs/API.md) for full request/response schemas, error co
 
 ## Configuration
 
-### backends.yaml
-
-The gateway reads a single YAML file that maps routes to backend URLs:
-
-```yaml
-backends:
-  llama-embed:
-    url: http://llama-embed.llm-infra.svc.cluster.local:8081
-    type: openai-compatible
-    health: /health
-  chatterbox-tts:
-    url: http://chatterbox-tts.llm-infra.svc.cluster.local:8004
-    type: chatterbox
-    health: /api/ui/initial-data
-  whisper-stt:
-    url: http://whisper-stt.llm-infra.svc.cluster.local:8000
-    type: faster-whisper
-    health: /health
-  pyannote-speaker:
-    url: http://pyannote-speaker.llm-infra.svc.cluster.local:8000
-    type: pyannote
-    health: /health
-  deepfilter-audio:
-    url: http://deepfilter-audio.llm-infra.svc.cluster.local:8000
-    type: deepfilter
-    health: /health
-
-routes:
-  /v1/embeddings: llama-embed
-  /tts/*: chatterbox-tts
-  /stt/*: whisper-stt
-  /speakers/*: pyannote-speaker
-  /audio/*: deepfilter-audio
-```
-
-### Environment Variables
+The gateway reads `config/backends.yaml` — a simple YAML registry that maps URL patterns to backend services. Each backend entry specifies its cluster URL, type, and health endpoint.
 
 | Variable                      | Default                 | Description                       |
 | ----------------------------- | ----------------------- | --------------------------------- |
 | `SYNAPSE_GATEWAY_CONFIG_PATH` | `/config/backends.yaml` | Path to backend registry          |
 | `SYNAPSE_VOICE_LIBRARY_DIR`   | `/data/voices`          | Voice reference storage directory |
 | `SYNAPSE_LOG_LEVEL`           | `INFO`                  | Logging level                     |
+
+See the [API Reference](docs/API.md#configuration) for the full configuration schema and backend registry format.
 
 ## Deployment
 
@@ -278,9 +247,11 @@ synapse/
 
 ## Documentation
 
-- **[API Reference](docs/API.md)** — Full endpoint specs, request/response schemas, error codes, and code examples (curl, Python, TypeScript)
-- **[Integration Guide](docs/INTEGRATION-GUIDE.md)** — End-to-end workflows: voice cloning, meeting transcription, speaker verification, audio processing
-- **[Architecture Diagram](docs/synapse-architecture.png)** — Visual overview of the gateway and backends
+- **[API Reference](docs/API.md)** — Full endpoint specs, request/response schemas, error codes, and code examples
+- **[Integration Guide](docs/INTEGRATION-GUIDE.md)** — End-to-end workflows: voice cloning, meeting transcription, speaker verification
+- **[Interactive API Docs](https://synapse.arunlabs.com/docs)** — Swagger UI (live, auto-generated from code)
+- **[Status Dashboard](https://synapse.arunlabs.com/dashboard)** — Live backend health and service status
+- **[Architecture Diagram](docs/synapse-architecture.png)** — Visual overview of gateway and backends
 
 ## License
 
