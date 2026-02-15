@@ -14,12 +14,7 @@ backends:
   #   type: openai-compatible
   #   health: /health
 
-  # ollama:
-  #   url: http://ollama.llm-infra.svc.cluster.local:11434
-  #   type: ollama
-  #   health: /api/tags
-
-  # --- Speech (Phase 1: TTS only) ---
+  # --- Speech ---
   chatterbox-tts:
     url: http://chatterbox-tts.llm-infra.svc.cluster.local:8004
     type: chatterbox
@@ -43,7 +38,6 @@ backends:
     health: /health
 
 routes:
-  # /v1/chat/completions: ollama
   /v1/embeddings: llama-embed
   /tts/*: chatterbox-tts
   /stt/*: whisper-stt

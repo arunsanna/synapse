@@ -1,7 +1,7 @@
 .PHONY: help deploy deploy-infra deploy-embed deploy-gateway deploy-tts deploy-phase1 \
 	deploy-stt deploy-speaker deploy-audio \
 	build-gateway test-health test-embed test-tts logs validate clean status \
-	deploy-ollama show-routes
+	show-routes
 
 NAMESPACE ?= llm-infra
 KUBECTL ?= kubectl
@@ -48,9 +48,6 @@ deploy-phase1: deploy-infra deploy-embed deploy-tts deploy-gateway ## Deploy Pha
 	@echo ""
 	@echo "Phase 1 deployed. Custom gateway at synapse.arunlabs.com"
 	@echo "Run 'make test-health' to verify."
-
-deploy-ollama: ## Deploy Ollama (CPU LLM fallback)
-	$(KUBECTL) apply -f manifests/apps/ollama.yaml
 
 deploy-stt: ## Deploy whisper-stt (faster-whisper, CPU)
 	$(KUBECTL) apply -f manifests/apps/whisper-stt.yaml
@@ -123,9 +120,6 @@ logs-gateway: ## Tail Synapse gateway logs
 
 logs-tts: ## Tail Chatterbox TTS logs
 	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/chatterbox-tts
-
-logs-ollama: ## Tail Ollama logs
-	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/ollama
 
 logs-stt: ## Tail whisper-stt logs
 	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/whisper-stt

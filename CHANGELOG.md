@@ -12,7 +12,7 @@
 **Additional validation**:
 
 - Chatterbox requires reference audio >5 seconds (hardcoded assertion in `tts_turbo.py:221`)
-- Circuit breaker correctly triggers after 5 consecutive 500s, recovers after 30s cooldown
+- Circuit breaker correctly triggers after 5 consecutive connection failures (ConnectError/ConnectTimeout), recovers after 30s cooldown. HTTP 500 responses do NOT trip the breaker.
 - TTS stream with voice cloning (fallback to `/tts` endpoint) works correctly
 
 ## 2026-02-15 -- Phase 2 + 3 Deployment (STT, Speaker, Audio)

@@ -17,7 +17,6 @@ Thanks for your interest in contributing to Synapse! This document provides guid
 
 - Kubernetes cluster (K3s, Kind, Minikube, or managed)
 - `kubectl` configured with cluster access
-- NVIDIA GPU with drivers (for vLLM/TTS — optional for Ollama-only)
 - `helm` v3+ (optional, for Helm-based deployment)
 
 ### Local Testing
@@ -61,7 +60,7 @@ Types: feat|fix|docs|style|refactor|perf|test|chore
 Examples:
 
 - `feat(routing): add latency-based routing strategy`
-- `fix(ollama): correct health check endpoint path`
+- `fix(tts): correct voice reference upload path`
 - `docs(readme): add Helm installation instructions`
 
 ## Code Review
@@ -78,7 +77,7 @@ All PRs require:
 Use GitHub Issues with the provided templates. Include:
 
 - Kubernetes version
-- Inference backend versions (Ollama, vLLM)
+- Backend versions (llama-embed, Chatterbox, faster-whisper, pyannote, DeepFilterNet)
 - Steps to reproduce
 - Expected vs actual behavior
 
