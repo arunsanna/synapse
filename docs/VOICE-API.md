@@ -1,6 +1,6 @@
 # Synapse Voice API — Integration Guide
 
-> **Status**: Phases 1–3 deployed and verified (STT, TTS, Audio, Embeddings passing E2E; Speaker requires HF_TOKEN)
+> **Status**: Phases 1–3 deployed and verified — all 17/17 endpoints passing E2E
 > **Base URL**: `https://synapse.arunlabs.com` (internal: `http://synapse-gateway.llm-infra.svc.cluster.local:8000`)
 > **Last updated**: 2026-02-15
 > **For**: Voice agent / any client integrating TTS, STT, speaker analysis, audio processing, and voice management
@@ -767,7 +767,7 @@ Timeouts: TTS = 120s, STT = 120s, Speaker = 120s, Audio = 60s, Embeddings = 60s,
 | llama-embed        | Healthy (1/1) | Serving `all-minilm` (1024 dims)                                   |
 | Chatterbox TTS     | Running (1/1) | CPU mode, `registry.arunlabs.com/chatterbox-tts-server:cpu-latest` |
 | whisper-stt        | Running (1/1) | CPU, int8 quantized, large-v3-turbo model                          |
-| pyannote-speaker   | Running (1/1) | CPU, requires valid HF_TOKEN for model loading                     |
+| pyannote-speaker   | Running (1/1) | CPU, HF_TOKEN configured, models loaded                            |
 | deepfilter-audio   | Running (1/1) | CPU, DeepFilterNet3 + ffmpeg, torch 2.1.0                          |
 | Voices PVC         | Bound         | 5Gi, `local-path` storage class                                    |
 | Model Cache PVC    | Bound         | 10Gi, persists Chatterbox model files                              |
@@ -778,7 +778,7 @@ Timeouts: TTS = 120s, STT = 120s, Speaker = 120s, Audio = 60s, Embeddings = 60s,
 
 **GPU note**: All backends run on CPU because the RTX 5090 (Blackwell, sm_120) is not yet supported by stable PyTorch. Once PyTorch ships sm_120 kernels, switch Chatterbox to GPU image and add `nvidia.com/gpu: "1"` to resource limits.
 
-**Pyannote note**: HF token is set and model terms accepted. Speaker endpoints (`/speakers/*`) currently return 500 due to missing `omegaconf` dependency in pyannote-speaker image — fix committed to `coqui-tts-server/backends/pyannote-speaker/requirements.txt`, awaiting image rebuild and redeploy.
+**Pyannote note**: HF token is set, model terms accepted, and all speaker endpoints operational.
 
 **Verified E2E** (2026-02-15):
 
@@ -797,8 +797,8 @@ Timeouts: TTS = 120s, STT = 120s, Speaker = 120s, Audio = 60s, Embeddings = 60s,
 - `POST /stt/stream` → SSE events with segments + done event (200 OK)
 - `POST /audio/denoise` → cleaned WAV, 48kHz (200 OK)
 - `POST /audio/convert` → converted MP3, 192kbps 44.1kHz (200 OK)
-- `POST /speakers/diarize` → 500 (awaiting valid HF_TOKEN)
-- `POST /speakers/verify` → 500 (awaiting valid HF_TOKEN)
+- `POST /speakers/diarize` → speaker segments with timestamps (200 OK)
+- `POST /speakers/verify` → same/different speaker result (200 OK)
 
 **RESOLVED — Reference filename collision in voice cloning** (was severity: HIGH, fixed 2026-02-15):
 
@@ -850,8 +850,7 @@ All backends accept file uploads via multipart `POST` and return JSON (STT, spea
 
 **E2E test results** (17 endpoints tested):
 
-- 15/17 endpoints passing (200 OK with correct response data)
-- 2/17 expected failures: `/speakers/diarize` and `/speakers/verify` return 500 (placeholder HF_TOKEN — not a bug)
+- 17/17 endpoints passing (200 OK with correct response data)
 - Voice cloning works including collision scenario (upload short voice A → delete → upload long voice B → synthesize with B → 200 OK)
 
 **Reference filename collision bug**: Found and fixed. Gateway now properly re-uploads references when a new voice reuses the same `ref_001.wav` filename, and cache is invalidated on voice deletion.
@@ -890,7 +889,7 @@ All backends accept file uploads via multipart `POST` and return JSON (STT, spea
 | `use_auth_token` TypeError in pyannote      | Changed `use_auth_token=` to `token=` in pyannote-speaker main.py           |
 | `imagePullPolicy: IfNotPresent` stale cache | Temporarily patched to `Always` to force pull new images, then reverted     |
 
-**Known issue**: pyannote-speaker requires a valid HuggingFace token. The `pyannote-hf-token` Secret has a placeholder. Speaker endpoints return 500 until a real token is set (see [setup instructions](#pyannote-hf-token-setup)).
+**Resolved**: pyannote-speaker HF_TOKEN configured and speaker endpoints fully operational.
 
 ### 2026-02-14 — Full Phase 1 Deployment
 
