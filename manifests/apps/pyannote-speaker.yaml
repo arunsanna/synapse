@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pyannote-hf-token
+  namespace: llm-infra
+  labels:
+    app: pyannote-speaker
+    app.kubernetes.io/part-of: synapse
+type: Opaque
+stringData:
+  HF_TOKEN: "REPLACE_WITH_YOUR_HF_TOKEN"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pyannote-speaker
+  namespace: llm-infra
+  labels:
+    app: pyannote-speaker
+    app.kubernetes.io/part-of: synapse
+    app.kubernetes.io/component: speaker-backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # CPU-only; avoid double memory during rollout
+  selector:
+    matchLabels:
+      app: pyannote-speaker
+  template:
+    metadata:
+      labels:
+        app: pyannote-speaker
+        app.kubernetes.io/part-of: synapse
+    spec:
+      containers:
+        - name: pyannote-speaker
+          image: registry.arunlabs.com/pyannote-speaker:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: SPEAKER_DEVICE
+              value: cpu
+            - name: SPEAKER_HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: pyannote-hf-token
+                  key: HF_TOKEN
+          resources:
+            requests:
+              memory: 4Gi
+              cpu: "2"
+            limits:
+              memory: 12Gi
+              cpu: "6"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /cache/huggingface
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 40
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: pyannote-model-cache
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pyannote-model-cache
+  namespace: llm-infra
+  labels:
+    app: pyannote-speaker
+    app.kubernetes.io/part-of: synapse
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pyannote-speaker
+  namespace: llm-infra
+  labels:
+    app: pyannote-speaker
+    app.kubernetes.io/part-of: synapse
+spec:
+  selector:
+    app: pyannote-speaker
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http
+  type: ClusterIP

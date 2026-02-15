@@ -1,0 +1,126 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatterbox-tts
+  namespace: llm-infra
+  labels:
+    app: chatterbox-tts
+    app.kubernetes.io/part-of: synapse
+    app.kubernetes.io/component: tts-backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # CPU-only until PyTorch supports RTX 5090 (sm_120)
+  selector:
+    matchLabels:
+      app: chatterbox-tts
+  template:
+    metadata:
+      labels:
+        app: chatterbox-tts
+        app.kubernetes.io/part-of: synapse
+    spec:
+      containers:
+        - name: chatterbox
+          # CPU build: RTX 5090 (Blackwell/sm_120) not yet supported by stable PyTorch
+          # Switch to ghcr.io/devnen/chatterbox-tts-server:latest + nvidia.com/gpu: "1"
+          # once PyTorch stable ships sm_120 kernels
+          image: registry.arunlabs.com/chatterbox-tts-server:cpu-latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8004
+              name: http
+          resources:
+            requests:
+              memory: 4Gi
+              cpu: "4"
+            limits:
+              memory: 16Gi
+              cpu: "8"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /app/model_cache
+            - name: hf-cache
+              mountPath: /app/hf_cache
+            - name: voices
+              mountPath: /app/reference_audio
+          startupProbe:
+            httpGet:
+              path: /api/ui/initial-data
+              port: 8004
+            failureThreshold: 40
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/ui/initial-data
+              port: 8004
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/ui/initial-data
+              port: 8004
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: chatterbox-model-cache
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: chatterbox-hf-cache
+        - name: voices
+          persistentVolumeClaim:
+            claimName: synapse-voices
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chatterbox-model-cache
+  namespace: llm-infra
+  labels:
+    app: chatterbox-tts
+    app.kubernetes.io/part-of: synapse
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chatterbox-hf-cache
+  namespace: llm-infra
+  labels:
+    app: chatterbox-tts
+    app.kubernetes.io/part-of: synapse
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatterbox-tts
+  namespace: llm-infra
+  labels:
+    app: chatterbox-tts
+    app.kubernetes.io/part-of: synapse
+spec:
+  selector:
+    app: chatterbox-tts
+  ports:
+    - port: 8004
+      targetPort: 8004
+      name: http
+  type: ClusterIP

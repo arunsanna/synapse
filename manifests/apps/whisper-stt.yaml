@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whisper-stt
+  namespace: llm-infra
+  labels:
+    app: whisper-stt
+    app.kubernetes.io/part-of: synapse
+    app.kubernetes.io/component: stt-backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # CPU-only; avoid double memory during rollout
+  selector:
+    matchLabels:
+      app: whisper-stt
+  template:
+    metadata:
+      labels:
+        app: whisper-stt
+        app.kubernetes.io/part-of: synapse
+    spec:
+      containers:
+        - name: whisper-stt
+          image: registry.arunlabs.com/whisper-stt:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: WHISPER_MODEL_SIZE
+              value: large-v3-turbo
+            - name: WHISPER_DEVICE
+              value: cpu
+            - name: WHISPER_COMPUTE_TYPE
+              value: int8
+            - name: WHISPER_MODEL_CACHE_DIR
+              value: /cache/huggingface
+          resources:
+            requests:
+              memory: 4Gi
+              cpu: "2"
+            limits:
+              memory: 12Gi
+              cpu: "6"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /cache/huggingface
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 40
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: whisper-model-cache
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: whisper-model-cache
+  namespace: llm-infra
+  labels:
+    app: whisper-stt
+    app.kubernetes.io/part-of: synapse
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: whisper-stt
+  namespace: llm-infra
+  labels:
+    app: whisper-stt
+    app.kubernetes.io/part-of: synapse
+spec:
+  selector:
+    app: whisper-stt
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http
+  type: ClusterIP
