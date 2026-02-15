@@ -1,9 +1,12 @@
-.PHONY: help deploy deploy-infra deploy-embed deploy-gateway deploy-phase1 \
-	configure-gateway test-health test-embed logs validate clean status \
-	deploy-ollama deploy-litellm
+.PHONY: help deploy deploy-infra deploy-embed deploy-gateway deploy-tts deploy-phase1 \
+	deploy-stt deploy-speaker deploy-audio \
+	build-gateway test-health test-embed test-tts logs validate clean status \
+	deploy-ollama show-routes
 
 NAMESPACE ?= llm-infra
 KUBECTL ?= kubectl
+REGISTRY ?= registry.arunlabs.com
+GATEWAY_IMAGE ?= $(REGISTRY)/synapse-gateway:latest
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -16,34 +19,47 @@ validate: ## Validate all manifests (dry-run)
 	$(KUBECTL) apply --dry-run=client -f manifests/apps/
 	@echo "All manifests valid."
 
+# === Build ===
+
+build-gateway: ## Build and push gateway image to registry
+	docker build -t $(GATEWAY_IMAGE) gateway/
+	docker push $(GATEWAY_IMAGE)
+
 # === Infrastructure ===
 
-deploy-infra: ## Deploy namespace and PVCs
+deploy-infra: ## Deploy namespace, PVCs, and ingress
 	$(KUBECTL) apply -f manifests/infra/namespace.yaml
 	$(KUBECTL) apply -f manifests/infra/synapse-models-pvc.yaml
+	$(KUBECTL) apply -f manifests/infra/pvc-voices.yaml
+	$(KUBECTL) apply -f manifests/infra/ingress.yaml
 
-# === Phase 1: Embeddings + Gateway ===
+# === Phase 1: Custom Gateway + Embeddings + TTS ===
 
 deploy-embed: ## Deploy llama-server embeddings (CPU)
 	$(KUBECTL) apply -f manifests/apps/llama-embed.yaml
 
-deploy-gateway: ## Deploy Bifrost gateway
-	$(KUBECTL) apply -f manifests/apps/bifrost.yaml
+deploy-gateway: ## Deploy Synapse custom gateway
+	$(KUBECTL) apply -f manifests/apps/gateway.yaml
 
-configure-gateway: ## Validate Bifrost gateway configuration
-	./scripts/configure-gateway.sh
+deploy-tts: ## Deploy Chatterbox TTS backend (GPU)
+	$(KUBECTL) apply -f manifests/apps/chatterbox-tts.yaml
 
-deploy-phase1: deploy-infra deploy-embed deploy-gateway ## Deploy Phase 1 (embeddings + gateway)
+deploy-phase1: deploy-infra deploy-embed deploy-tts deploy-gateway ## Deploy Phase 1 (gateway + embeddings + TTS)
 	@echo ""
-	@echo "Phase 1 deployed. Bifrost config is baked into ConfigMap — no post-deploy step needed."
+	@echo "Phase 1 deployed. Custom gateway at synapse.arunlabs.com"
+	@echo "Run 'make test-health' to verify."
 
-# === Legacy (Ollama/LiteLLM — kept for reference) ===
-
-deploy-ollama: ## Deploy Ollama (legacy)
+deploy-ollama: ## Deploy Ollama (CPU LLM fallback)
 	$(KUBECTL) apply -f manifests/apps/ollama.yaml
 
-deploy-litellm: ## Deploy LiteLLM gateway (legacy)
-	$(KUBECTL) apply -f manifests/apps/litellm.yaml
+deploy-stt: ## Deploy whisper-stt (faster-whisper, CPU)
+	$(KUBECTL) apply -f manifests/apps/whisper-stt.yaml
+
+deploy-speaker: ## Deploy pyannote-speaker (diarization, CPU)
+	$(KUBECTL) apply -f manifests/apps/pyannote-speaker.yaml
+
+deploy-audio: ## Deploy deepfilter-audio (noise reduction, CPU)
+	$(KUBECTL) apply -f manifests/apps/deepfilter-audio.yaml
 
 deploy: deploy-infra ## Deploy all services
 	$(KUBECTL) apply -f manifests/apps/
@@ -59,9 +75,40 @@ test-health: ## Health check all services
 	@echo ""
 	@echo "--- Services ---"
 	@$(KUBECTL) -n $(NAMESPACE) get svc 2>/dev/null || echo "No services found"
+	@echo ""
+	@echo "--- Gateway Health ---"
+	@curl -sf https://synapse.arunlabs.com/health 2>/dev/null | python3 -m json.tool || echo "Gateway unreachable"
 
 test-embed: ## Test embedding endpoint
 	./scripts/test-embeddings.sh
+
+test-tts: ## Test TTS synthesis
+	@echo "--- TTS Synthesize ---"
+	@curl -sf -X POST https://synapse.arunlabs.com/tts/synthesize \
+		-H "Content-Type: application/json" \
+		-d '{"text": "Hello from Synapse", "language": "en"}' \
+		-o /tmp/synapse_test.wav && echo "OK: /tmp/synapse_test.wav" || echo "FAILED"
+
+show-routes: ## Show all registered routes
+	@echo "Gateway routes:"
+	@echo "  POST /v1/embeddings              -> llama-embed"
+	@echo "  GET  /v1/models                  -> all LLM backends"
+	@echo "  GET  /voices                     -> gateway (local)"
+	@echo "  POST /voices                     -> gateway (local)"
+	@echo "  POST /voices/{id}/references     -> gateway (local)"
+	@echo "  DELETE /voices/{id}              -> gateway (local)"
+	@echo "  POST /tts/synthesize             -> chatterbox-tts"
+	@echo "  POST /tts/stream                 -> chatterbox-tts"
+	@echo "  POST /tts/interpolate            -> chatterbox-tts"
+	@echo "  GET  /tts/languages              -> gateway (static)"
+	@echo "  POST /stt/transcribe             -> whisper-stt"
+	@echo "  POST /stt/detect-language        -> whisper-stt"
+	@echo "  POST /stt/stream                 -> whisper-stt (SSE)"
+	@echo "  POST /speakers/diarize           -> pyannote-speaker"
+	@echo "  POST /speakers/verify            -> pyannote-speaker"
+	@echo "  POST /audio/denoise              -> deepfilter-audio"
+	@echo "  POST /audio/convert              -> deepfilter-audio"
+	@echo "  GET  /health                     -> aggregated"
 
 # === Debugging ===
 
@@ -71,14 +118,23 @@ logs: ## Tail logs from all services
 logs-embed: ## Tail llama-embed logs
 	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/llama-embed
 
-logs-gateway: ## Tail Bifrost gateway logs
-	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/bifrost-gateway
+logs-gateway: ## Tail Synapse gateway logs
+	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/synapse-gateway
 
-logs-ollama: ## Tail Ollama logs (legacy)
+logs-tts: ## Tail Chatterbox TTS logs
+	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/chatterbox-tts
+
+logs-ollama: ## Tail Ollama logs
 	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/ollama
 
-logs-litellm: ## Tail LiteLLM logs (legacy)
-	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/litellm-proxy
+logs-stt: ## Tail whisper-stt logs
+	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/whisper-stt
+
+logs-speaker: ## Tail pyannote-speaker logs
+	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/pyannote-speaker
+
+logs-audio: ## Tail deepfilter-audio logs
+	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/deepfilter-audio
 
 status: ## Show all pods in namespace
 	$(KUBECTL) -n $(NAMESPACE) get pods -o wide
