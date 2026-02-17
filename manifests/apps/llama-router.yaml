@@ -56,7 +56,7 @@ spec:
               mountPath: /models
       containers:
         - name: llama-server
-          image: ghcr.io/ggml-org/llama.cpp:server
+          image: ghcr.io/ggml-org/llama.cpp:server-cuda
           # Router mode: no --model argument. Models are loaded/unloaded via /models/load.
           args:
             - --host
@@ -88,11 +88,13 @@ spec:
               name: http
           resources:
             requests:
-              memory: 8Gi
+              memory: 16Gi
               cpu: "4"
+              nvidia.com/gpu: "1"
             limits:
-              memory: 24Gi
-              cpu: "16"
+              memory: 120Gi
+              cpu: "24"
+              nvidia.com/gpu: "1"
           volumeMounts:
             - name: models
               mountPath: /models
