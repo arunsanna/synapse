@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-router
+  namespace: llm-infra
+  labels:
+    app: llama-router
+    app.kubernetes.io/part-of: synapse
+    app.kubernetes.io/component: llm-router
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: llama-router
+  template:
+    metadata:
+      labels:
+        app: llama-router
+        app.kubernetes.io/part-of: synapse
+    spec:
+      initContainers:
+        # Cache a small Unsloth model for first-pass validation.
+        - name: download-test-model
+          image: curlimages/curl:8.12.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              MODEL_DIR="/models/llm"
+              mkdir -p "$MODEL_DIR"
+              download_if_missing() {
+                local file_path="$1"
+                local url="$2"
+                local label="$3"
+                if [ ! -f "$file_path" ]; then
+                  echo "Downloading $label ..."
+                  curl -L --progress-bar -o "${file_path}.part" "$url"
+                  mv "${file_path}.part" "$file_path"
+                  echo "Downloaded: $label"
+                else
+                  echo "Already cached: $label"
+                fi
+              }
+              download_if_missing \
+                "$MODEL_DIR/Qwen3-8B-Q4_K_M.gguf" \
+                "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf" \
+                "unsloth/Qwen3-8B-GGUF Q4_K_M (~5GB)"
+              download_if_missing \
+                "$MODEL_DIR/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf" \
+                "https://huggingface.co/unsloth/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf" \
+                "unsloth/Qwen2.5-Coder-7B-Instruct-GGUF Q4_K_M (~4.7GB)"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      containers:
+        - name: llama-server
+          image: ghcr.io/ggml-org/llama.cpp:server
+          # Router mode: no --model argument. Models are loaded/unloaded via /models/load.
+          args:
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8082"
+            - --models-dir
+            - /models/llm
+            - --models-max
+            - "1"
+            - --no-models-autoload
+            - --ctx-size
+            - "8192"
+            - --parallel
+            - "1"
+            - --batch-size
+            - "1024"
+            - --ubatch-size
+            - "512"
+            - --threads
+            - "16"
+            - --threads-batch
+            - "16"
+            - --sleep-idle-seconds
+            - "600"
+            - --metrics
+          ports:
+            - containerPort: 8082
+              name: http
+          resources:
+            requests:
+              memory: 8Gi
+              cpu: "4"
+            limits:
+              memory: 24Gi
+              cpu: "16"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: synapse-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-router
+  namespace: llm-infra
+  labels:
+    app: llama-router
+    app.kubernetes.io/part-of: synapse
+spec:
+  selector:
+    app: llama-router
+  ports:
+    - port: 8082
+      targetPort: 8082
+      name: http
+  type: ClusterIP

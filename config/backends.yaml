@@ -9,6 +9,11 @@ backends:
     type: openai-compatible
     health: /health
 
+  llama-router:
+    url: http://llama-router.llm-infra.svc.cluster.local:8082
+    type: openai-compatible
+    health: /health
+
   # vllm:
   #   url: http://vllm-inference.llm-infra.svc.cluster.local:8001
   #   type: openai-compatible
@@ -39,6 +44,7 @@ backends:
 
 routes:
   /v1/embeddings: llama-embed
+  /v1/chat/completions: llama-router
   /tts/*: chatterbox-tts
   /stt/*: whisper-stt
   /speakers/*: pyannote-speaker

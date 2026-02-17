@@ -1,5 +1,50 @@
 # Synapse Changelog
 
+## 2026-02-16 -- Dashboard UI: Manual Model Load/Unload
+
+**Added**:
+
+- New dashboard panel for manual llama-router model control:
+  - Lists model status from `GET /models`
+  - One-click `Load` and `Unload` actions via `/models/load` and `/models/unload`
+  - Live auto-refresh every 10 seconds + action feedback
+- UI entrypoint redirects:
+  - `GET /` -> `/dashboard`
+  - `GET /ui` -> `/dashboard`
+
+## 2026-02-16 -- llama.cpp Router (Model Load/Unload + Chat Completions)
+
+**Added**:
+
+- New `llama-router` deployment (`manifests/apps/llama-router.yaml`) using llama.cpp router mode
+- Dynamic model management endpoints through gateway:
+  - `GET /models`
+  - `POST /models/load`
+  - `POST /models/unload`
+- OpenAI-compatible chat proxy route:
+  - `POST /v1/chat/completions` -> `llama-router`
+- Router configured with `--models-dir`, `--models-max 1`, `--no-models-autoload`, and `--sleep-idle-seconds 600` for load/offload behavior
+
+**Initial test model**:
+
+- Cached model on first deploy: `unsloth/Qwen3-8B-GGUF` (`Qwen3-8B-Q4_K_M.gguf`, ~5GB)
+
+## 2026-02-16 -- Tiny Auto-Routing Policy (General vs Coder)
+
+**Added**:
+
+- Second Unsloth model cache in `llama-router` init:
+  - `unsloth/Qwen2.5-Coder-7B-Instruct-GGUF` (`Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf`)
+- Tiny gateway policy for `POST /v1/chat/completions`:
+  - if `model` is explicit -> use it
+  - if `model` is `auto`/omitted -> keyword-based routing:
+    - coding-like prompts -> `Qwen2.5-Coder-7B-Instruct-Q4_K_M`
+    - otherwise -> `Qwen3-8B-Q4_K_M`
+- Auto-load support before chat inference:
+  - gateway checks router model state
+  - unloads other loaded model when needed (`models-max=1`)
+  - loads selected model and waits for `loaded` state before forwarding request
+
 ## 2026-02-15 -- Voice Cloning E2E Verification (all passing)
 
 **E2E test results** (17 endpoints tested):

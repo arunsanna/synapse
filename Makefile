@@ -1,5 +1,5 @@
 .PHONY: help deploy deploy-infra deploy-embed deploy-gateway deploy-tts deploy-phase1 \
-	deploy-stt deploy-speaker deploy-audio \
+	deploy-llm deploy-stt deploy-speaker deploy-audio \
 	build-gateway test-health test-embed test-tts logs validate clean status \
 	show-routes
 
@@ -37,6 +37,9 @@ deploy-infra: ## Deploy namespace, PVCs, and ingress
 
 deploy-embed: ## Deploy llama-server embeddings (CPU)
 	$(KUBECTL) apply -f manifests/apps/llama-embed.yaml
+
+deploy-llm: ## Deploy llama.cpp router backend (chat/completions + model load/unload)
+	$(KUBECTL) apply -f manifests/apps/llama-router.yaml
 
 deploy-gateway: ## Deploy Synapse custom gateway
 	$(KUBECTL) apply -f manifests/apps/gateway.yaml
@@ -89,7 +92,11 @@ test-tts: ## Test TTS synthesis
 show-routes: ## Show all registered routes
 	@echo "Gateway routes:"
 	@echo "  POST /v1/embeddings              -> llama-embed"
+	@echo "  POST /v1/chat/completions        -> llama-router"
 	@echo "  GET  /v1/models                  -> all LLM backends"
+	@echo "  GET  /models                     -> llama-router model status"
+	@echo "  POST /models/load                -> llama-router load model"
+	@echo "  POST /models/unload              -> llama-router unload model"
 	@echo "  GET  /voices                     -> gateway (local)"
 	@echo "  POST /voices                     -> gateway (local)"
 	@echo "  POST /voices/{id}/references     -> gateway (local)"
@@ -114,6 +121,9 @@ logs: ## Tail logs from all services
 
 logs-embed: ## Tail llama-embed logs
 	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/llama-embed
+
+logs-llm: ## Tail llama-router logs
+	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/llama-router
 
 logs-gateway: ## Tail Synapse gateway logs
 	$(KUBECTL) -n $(NAMESPACE) logs -f deploy/synapse-gateway

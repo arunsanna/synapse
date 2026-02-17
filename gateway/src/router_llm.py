@@ -1,9 +1,13 @@
-"""LLM proxy routes — /v1/embeddings, /v1/models."""
+"""LLM proxy routes — embeddings, chat completions, and model management."""
 
+import asyncio
+import json
 import logging
+import re
+import time
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .backend_client import client
 from .config import get_backend_url
@@ -11,17 +15,198 @@ from .config import get_backend_url
 router = APIRouter(tags=["llm"])
 logger = logging.getLogger(__name__)
 
+GENERAL_CHAT_MODEL = "Qwen3-8B-Q4_K_M"
+CODER_CHAT_MODEL = "Qwen2.5-Coder-7B-Instruct-Q4_K_M"
+AUTO_MODEL_ALIASES = {"", "auto", "synapse:auto", "synapse-auto"}
+LOAD_TIMEOUT_SECONDS = 240.0
+LOAD_POLL_INTERVAL_SECONDS = 1.0
+
+CODING_HINT_RE = re.compile(
+    r"\b("
+    r"code|python|javascript|typescript|java|go|rust|sql|regex|debug|"
+    r"stack trace|exception|compile|refactor|unit test|algorithm|"
+    r"function|class|api|dockerfile|kubernetes|yaml|json|bash|shell|git|"
+    r"pull request|bug"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def _get_config():
     from .main import get_backends_config
     return get_backends_config()
 
 
+def _require_backend_url(config: dict, backend_name: str) -> str:
+    """Resolve backend URL or raise 503 if backend is not configured."""
+    try:
+        return get_backend_url(config, backend_name)
+    except KeyError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Backend '{backend_name}' is not configured",
+        ) from e
+
+
+def _proxy_response(resp) -> Response:
+    """Return backend response bytes while preserving content-type and status."""
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers={"Content-Type": resp.headers.get("content-type", "application/json")},
+    )
+
+
+def _extract_user_text(messages: list) -> str:
+    """Extract user text from OpenAI-style chat messages."""
+    parts: list[str] = []
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+            continue
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+                elif item.get("type") == "text" and isinstance(item.get("content"), str):
+                    parts.append(item["content"])
+    return "\n".join(parts)
+
+
+def _select_chat_model(payload: dict) -> tuple[str, str]:
+    """Select model based on explicit request or a tiny coding-vs-general policy."""
+    requested = payload.get("model")
+    if isinstance(requested, str):
+        req = requested.strip()
+        if req.lower() not in AUTO_MODEL_ALIASES:
+            return req, "explicit"
+
+    messages = payload.get("messages", [])
+    text = _extract_user_text(messages if isinstance(messages, list) else [])
+    if CODING_HINT_RE.search(text):
+        return CODER_CHAT_MODEL, "policy-coder"
+    return GENERAL_CHAT_MODEL, "policy-general"
+
+
+def _find_model(models: list, model_id: str) -> dict | None:
+    for model in models:
+        if isinstance(model, dict) and model.get("id") == model_id:
+            return model
+    return None
+
+
+def _status_value(model: dict | None) -> str:
+    if not model:
+        return "missing"
+    status = model.get("status")
+    if isinstance(status, dict):
+        value = status.get("value")
+        if isinstance(value, str):
+            return value
+    return "unknown"
+
+
+def _status_failed(model: dict | None) -> bool:
+    if not model:
+        return False
+    status = model.get("status")
+    return bool(isinstance(status, dict) and status.get("failed"))
+
+
+async def _list_router_models(router_url: str) -> list[dict]:
+    resp = await client.request(
+        "llama-router",
+        "GET",
+        f"{router_url}/models",
+        timeout_type="default",
+    )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"llama-router /models failed with status {resp.status_code}",
+        )
+    data = resp.json()
+    models = data.get("data", [])
+    if not isinstance(models, list):
+        raise HTTPException(status_code=502, detail="llama-router /models returned invalid payload")
+    return models
+
+
+async def _ensure_router_model_loaded(router_url: str, model_id: str) -> None:
+    """Ensure selected model is loaded; unload other loaded models when needed."""
+    models = await _list_router_models(router_url)
+    model = _find_model(models, model_id)
+    if model is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{model_id}' is not available in llama-router /models",
+        )
+
+    loaded_other_models = [
+        m.get("id") for m in models
+        if isinstance(m, dict)
+        and m.get("id") != model_id
+        and _status_value(m) == "loaded"
+        and isinstance(m.get("id"), str)
+    ]
+    for other_id in loaded_other_models:
+        logger.info("Unloading active model '%s' before loading '%s'", other_id, model_id)
+        await client.request(
+            "llama-router",
+            "POST",
+            f"{router_url}/models/unload",
+            json={"model": other_id},
+            timeout_type="llm",
+        )
+
+    state = _status_value(model)
+    if state == "loaded":
+        return
+
+    if state != "loading":
+        load_resp = await client.request(
+            "llama-router",
+            "POST",
+            f"{router_url}/models/load",
+            json={"model": model_id},
+            timeout_type="llm",
+        )
+        if load_resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"llama-router failed to load '{model_id}' (status {load_resp.status_code})",
+            )
+
+    deadline = time.monotonic() + LOAD_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        await asyncio.sleep(LOAD_POLL_INTERVAL_SECONDS)
+        models = await _list_router_models(router_url)
+        model = _find_model(models, model_id)
+        state = _status_value(model)
+        if state == "loaded":
+            return
+        if _status_failed(model):
+            raise HTTPException(
+                status_code=502,
+                detail=f"llama-router reported failed load for '{model_id}'",
+            )
+
+    raise HTTPException(
+        status_code=504,
+        detail=f"Timed out waiting for model '{model_id}' to load",
+    )
+
+
 @router.post("/v1/embeddings")
 async def embeddings(request: Request):
     """Proxy embeddings to llama-embed."""
     config = _get_config()
-    backend_url = get_backend_url(config, "llama-embed")
+    backend_url = _require_backend_url(config, "llama-embed")
     body = await request.body()
 
     url = f"{backend_url}/v1/embeddings"
@@ -32,6 +217,105 @@ async def embeddings(request: Request):
         timeout_type="embeddings",
     )
     return JSONResponse(content=resp.json(), status_code=resp.status_code)
+
+
+@router.post("/v1/chat/completions")
+async def chat_completions(request: Request):
+    """Proxy OpenAI-compatible chat completions to llama.cpp router backend."""
+    config = _get_config()
+    router_url = _require_backend_url(config, "llama-router")
+    body = await request.body()
+
+    if not body:
+        raise HTTPException(status_code=400, detail="Request body is required")
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e.msg}") from e
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON body must be an object")
+
+    selected_model, reason = _select_chat_model(payload)
+    payload["model"] = selected_model
+    logger.info("Chat model selection -> model=%s reason=%s", selected_model, reason)
+
+    await _ensure_router_model_loaded(router_url, selected_model)
+
+    # Handle streaming explicitly to keep SSE chunking end-to-end.
+    stream = bool(payload.get("stream", False))
+    proxy_body = json.dumps(payload).encode("utf-8")
+
+    url = f"{router_url}/v1/chat/completions"
+    if stream:
+        return StreamingResponse(
+            client.stream_bytes(
+                "llama-router",
+                "POST",
+                url,
+                content=proxy_body,
+                headers={"Content-Type": "application/json"},
+                timeout_type="llm",
+            ),
+            media_type="text/event-stream",
+        )
+
+    resp = await client.request(
+        "llama-router",
+        "POST",
+        url,
+        content=proxy_body,
+        headers={"Content-Type": "application/json"},
+        timeout_type="llm",
+    )
+    return _proxy_response(resp)
+
+
+@router.get("/models")
+async def list_router_models():
+    """List llama.cpp router models and their load status."""
+    config = _get_config()
+    backend_url = _require_backend_url(config, "llama-router")
+    resp = await client.request(
+        "llama-router",
+        "GET",
+        f"{backend_url}/models",
+        timeout_type="default",
+    )
+    return _proxy_response(resp)
+
+
+@router.post("/models/load")
+async def load_router_model(request: Request):
+    """Load a model in llama.cpp router mode."""
+    config = _get_config()
+    backend_url = _require_backend_url(config, "llama-router")
+    body = await request.body()
+    resp = await client.request(
+        "llama-router",
+        "POST",
+        f"{backend_url}/models/load",
+        content=body,
+        headers={"Content-Type": "application/json"},
+        timeout_type="llm",
+    )
+    return _proxy_response(resp)
+
+
+@router.post("/models/unload")
+async def unload_router_model(request: Request):
+    """Unload a model in llama.cpp router mode."""
+    config = _get_config()
+    backend_url = _require_backend_url(config, "llama-router")
+    body = await request.body()
+    resp = await client.request(
+        "llama-router",
+        "POST",
+        f"{backend_url}/models/unload",
+        content=body,
+        headers={"Content-Type": "application/json"},
+        timeout_type="llm",
+    )
+    return _proxy_response(resp)
 
 
 @router.get("/v1/models")
@@ -53,6 +337,22 @@ async def list_models():
                 models.append(m)
     except Exception as e:
         logger.warning("Failed to list llama-embed models: %s", e)
+
+    # llama-router models (chat/completions)
+    try:
+        router_url = get_backend_url(config, "llama-router")
+        resp = await client.request(
+            "llama-router", "GET", f"{router_url}/v1/models",
+            timeout_type="default",
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            for m in data.get("data", []):
+                models.append(m)
+    except KeyError:
+        pass
+    except Exception as e:
+        logger.warning("Failed to list llama-router models: %s", e)
 
     # vLLM models (when deployed — currently commented out in backends.yaml)
     try:
