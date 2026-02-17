@@ -22,11 +22,11 @@ Thanks for your interest in contributing to Synapse! This document provides guid
 ### Local Testing
 
 ```bash
+# Python syntax check
+python3 -m compileall gateway/src
+
 # Validate manifests
 make validate
-
-# Deploy to your cluster
-make deploy-phase1
 
 # Run health checks
 make test-health
@@ -48,6 +48,9 @@ make test-health
 - **Scripts**: Must be POSIX-compatible. Use `#!/usr/bin/env bash`. Include error handling.
 - **Config**: Document every field. Provide sane defaults.
 - **Docs**: Keep hardware-agnostic. Use "your GPU" not specific model names.
+- **Docs**: Update `README.md`, `docs/API.md`, and `docs/INTEGRATION-GUIDE.md` whenever endpoint behavior changes.
+- **Architecture changes**: Update `docs/ARCHITECTURE.md` and relevant diagrams.
+- **Superseded artifacts**: Move stale docs/assets to `archive/` instead of deleting history.
 
 ## Commit Convention
 

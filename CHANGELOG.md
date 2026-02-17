@@ -1,5 +1,31 @@
 # Synapse Changelog
 
+## 2026-02-17 -- Repository Cleanup + Documentation Realignment
+
+**Code quality / debt reduction**:
+
+- Added explicit backend client initialization guards to prevent implicit `NoneType` failures before startup.
+- Added resilient JSON fallback handling for STT and speaker proxy routes when upstream returns non-JSON errors.
+- Hardened voice reference upload validation:
+  - Enforced WAV-only uploads by filename/content-type check
+  - Enforced file count and per-file size limits on both create and add-reference paths
+- Hardened audio conversion validation:
+  - Enforced allowed `output_format` values (`wav`, `mp3`, `flac`, `ogg`)
+  - Normalized response filename/media-type from validated format
+- Marked dashboard route (`/dashboard`) as non-OpenAPI to keep API schema focused on programmatic routes.
+
+**Documentation / structure**:
+
+- Reorganized active diagram assets into `docs/diagrams/`.
+- Added `docs/ARCHITECTURE.md` with Mermaid topology and request-flow diagrams.
+- Added `docs/REPOSITORY-ORGANIZATION.md` with cleanup policy and doc update checklist.
+- Rewrote `README.md` and `docs/API.md` to match current route surface (22 API endpoints).
+- Rewrote `docs/INTEGRATION-GUIDE.md` with current LLM + speech workflows.
+- Created top-level `archive/` with archive policy (`archive/README.md`).
+- Archived superseded docs/assets:
+  - `archive/docs/UI_REVAMP_GUIDE.md`
+  - `archive/diagrams/synapse-architecture-diagram.png`
+
 ## 2026-02-16 -- Dashboard UI: Manual Model Load/Unload
 
 **Added**:

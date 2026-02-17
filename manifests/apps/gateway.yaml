@@ -43,6 +43,10 @@ data:
     routes:
       /v1/embeddings: llama-embed
       /v1/chat/completions: llama-router
+      /models: llama-router
+      /models/load: llama-router
+      /models/unload: llama-router
+      /v1/models: llama-router
       /tts/*: chatterbox-tts
       /stt/*: whisper-stt
       /speakers/*: pyannote-speaker

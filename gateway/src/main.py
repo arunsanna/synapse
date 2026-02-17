@@ -25,6 +25,8 @@ def get_backends_config() -> dict:
 
 
 def get_voice_manager() -> VoiceManager:
+    if _voice_manager is None:
+        raise RuntimeError("Voice manager is not initialized")
     return _voice_manager
 
 
@@ -2272,7 +2274,7 @@ _DASHBOARD_HTML = """\
 </html>"""
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
+@app.get("/dashboard", include_in_schema=False, response_class=HTMLResponse)
 async def dashboard():
     """Self-contained HTML status dashboard with live health monitoring."""
     config = get_backends_config()

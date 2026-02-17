@@ -76,6 +76,12 @@ class BackendClient:
             self._breakers[backend] = CircuitBreaker()
         return self._breakers[backend]
 
+    def _require_client(self) -> httpx.AsyncClient:
+        """Return initialized client or raise a clear runtime error."""
+        if self._client is None:
+            raise RuntimeError("Backend client is not started")
+        return self._client
+
     async def request(
         self,
         backend_name: str,
@@ -99,7 +105,7 @@ class BackendClient:
         last_exc: Exception | None = None
         for attempt in range(max_retries):
             try:
-                resp = await self._client.request(
+                resp = await self._require_client().request(
                     method, url, timeout=timeout, **kwargs
                 )
                 breaker.record_success()
@@ -141,7 +147,7 @@ class BackendClient:
 
         timeout = TIMEOUTS.get(timeout_type, TIMEOUTS["default"])
         try:
-            async with self._client.stream(
+            async with self._require_client().stream(
                 method, url, timeout=timeout, **kwargs
             ) as resp:
                 breaker.record_success()
@@ -154,7 +160,7 @@ class BackendClient:
     async def health_check(self, backend_name: str, url: str) -> dict:
         """Check a backend's health endpoint. Returns status dict."""
         try:
-            resp = await self._client.get(url, timeout=5.0)
+            resp = await self._require_client().get(url, timeout=5.0)
             return {
                 "status": "healthy" if resp.status_code == 200 else "unhealthy",
                 "code": resp.status_code,
