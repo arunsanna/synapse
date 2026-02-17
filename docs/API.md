@@ -117,11 +117,29 @@ Returns model status from llama-router (`loaded`, `loading`, `unloaded`, or fail
 
 ### POST /models/load
 
-Pass-through model load request to llama-router.
+Load a router model and optionally store Synapse-side default generation settings.
 
 ```json
 { "model": "Qwen3-8B-Q4_K_M" }
 ```
+
+Optional fields (stored per model in gateway memory):
+
+```json
+{
+  "model": "MiniMax-M2.5-UD-TQ1_0",
+  "temperature": 1.0,
+  "top_p": 0.95,
+  "top_k": 40,
+  "system_prompt": "You are a helpful assistant. Your name is MiniMax-M2.5 and is built by MiniMax."
+}
+```
+
+Behavior:
+
+- `llama-router` still receives only `{ "model": ... }`.
+- The optional fields above are applied by Synapse to future `/v1/chat/completions` requests for that model only when the request does not already provide those values.
+- `GET /models` exposes configured values under `status.synapse_defaults`.
 
 ### POST /models/unload
 

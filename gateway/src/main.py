@@ -701,6 +701,41 @@ _DASHBOARD_HTML = """\
             margin-bottom: 0.72rem;
         }
 
+        .model-load-defaults {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.55rem;
+            flex-wrap: wrap;
+        }
+
+        .load-default-field {
+            display: flex;
+            flex-direction: column;
+            gap: 0.18rem;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.62rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #89a0b8;
+        }
+
+        .load-default-input {
+            min-height: 34px;
+            border: 1px solid rgba(0, 212, 255, 0.45);
+            background: rgba(0, 212, 255, 0.08);
+            color: #d5f7ff;
+            padding: 0.22rem 0.42rem;
+            clip-path: var(--chamfer-sm);
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.68rem;
+            letter-spacing: 0.04em;
+            width: 88px;
+        }
+
+        .load-default-input.prompt {
+            width: min(540px, 72vw);
+        }
+
         .model-action-status {
             font-size: 0.74rem;
             color: #8aa2b7;
@@ -1254,6 +1289,20 @@ _DASHBOARD_HTML = """\
                 </div>
                 <div class="model-toolbar">
                     <button id="refresh-models-btn" class="btn focusable">Refresh Models</button>
+                    <div class="model-load-defaults" aria-label="Load defaults">
+                        <label class="load-default-field">Temp
+                            <input id="load-default-temp" class="load-default-input" type="number" min="0" step="0.01" value="1.0">
+                        </label>
+                        <label class="load-default-field">Top P
+                            <input id="load-default-top-p" class="load-default-input" type="number" min="0" max="1" step="0.01" value="0.95">
+                        </label>
+                        <label class="load-default-field">Top K
+                            <input id="load-default-top-k" class="load-default-input" type="number" min="1" step="1" value="40">
+                        </label>
+                        <label class="load-default-field">System Prompt
+                            <input id="load-default-system-prompt" class="load-default-input prompt" type="text" value="You are a helpful assistant. Your name is MiniMax-M2.5 and is built by MiniMax.">
+                        </label>
+                    </div>
                     <span id="model-action-status" class="model-action-status" aria-live="polite">No model actions yet.</span>
                 </div>
                 <div class="table-wrap">
@@ -1842,6 +1891,44 @@ _DASHBOARD_HTML = """\
             });
         }
 
+        function collectLoadDefaultsPayload() {
+            const payload = {};
+
+            const tempRaw = (document.getElementById('load-default-temp')?.value || '').trim();
+            if (tempRaw !== '') {
+                const value = Number(tempRaw);
+                if (!Number.isFinite(value) || value < 0) {
+                    throw new Error('Invalid Temp (must be >= 0)');
+                }
+                payload.temperature = value;
+            }
+
+            const topPRaw = (document.getElementById('load-default-top-p')?.value || '').trim();
+            if (topPRaw !== '') {
+                const value = Number(topPRaw);
+                if (!Number.isFinite(value) || value < 0 || value > 1) {
+                    throw new Error('Invalid Top P (must be between 0 and 1)');
+                }
+                payload.top_p = value;
+            }
+
+            const topKRaw = (document.getElementById('load-default-top-k')?.value || '').trim();
+            if (topKRaw !== '') {
+                const value = Number(topKRaw);
+                if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) {
+                    throw new Error('Invalid Top K (must be an integer >= 1)');
+                }
+                payload.top_k = value;
+            }
+
+            const promptRaw = (document.getElementById('load-default-system-prompt')?.value || '').trim();
+            if (promptRaw !== '') {
+                payload.system_prompt = promptRaw;
+            }
+
+            return payload;
+        }
+
         function applyHealthStaleState(message) {
             const dot = document.getElementById('overall-dot');
             if (dot) dot.className = 'hdr-dot stale';
@@ -2069,6 +2156,16 @@ _DASHBOARD_HTML = """\
             }
             const actionUpper = action.toUpperCase();
             const targetStatus = action === 'unload' ? 'unloaded' : 'loaded';
+            let requestBody = {model: modelId};
+            if (action === 'load') {
+                try {
+                    requestBody = {...requestBody, ...collectLoadDefaultsPayload()};
+                } catch (e) {
+                    setModelActionStatus(`${actionUpper} ${modelId}: ${e.message}`, true);
+                    announce(`${actionUpper} ${modelId} failed.`);
+                    return;
+                }
+            }
             modelActionInFlight = true;
             setModelButtonsDisabled(true);
             modelPendingActions.set(modelId, action);
@@ -2079,7 +2176,7 @@ _DASHBOARD_HTML = """\
                 const resp = await fetch(`/models/${action}`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({model: modelId}),
+                    body: JSON.stringify(requestBody),
                 });
                 const payload = await resp.json().catch(() => ({}));
                 if (!resp.ok) {

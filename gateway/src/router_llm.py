@@ -4,7 +4,9 @@ import asyncio
 import json
 import logging
 import re
+import threading
 import time
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -20,6 +22,8 @@ CODER_CHAT_MODEL = "Qwen2.5-Coder-7B-Instruct-Q4_K_M"
 AUTO_MODEL_ALIASES = {"", "auto", "synapse:auto", "synapse-auto"}
 LOAD_TIMEOUT_SECONDS = 240.0
 LOAD_POLL_INTERVAL_SECONDS = 1.0
+MODEL_LOAD_DEFAULTS: dict[str, dict[str, Any]] = {}
+MODEL_LOAD_DEFAULTS_LOCK = threading.Lock()
 
 CODING_HINT_RE = re.compile(
     r"\b("
@@ -116,6 +120,135 @@ def _status_failed(model: dict | None) -> bool:
         return False
     status = model.get("status")
     return bool(isinstance(status, dict) and status.get("failed"))
+
+
+def _get_model_load_defaults(model_id: str) -> dict[str, Any]:
+    with MODEL_LOAD_DEFAULTS_LOCK:
+        defaults = MODEL_LOAD_DEFAULTS.get(model_id, {})
+        return dict(defaults)
+
+
+def _update_model_load_defaults(model_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    with MODEL_LOAD_DEFAULTS_LOCK:
+        current = dict(MODEL_LOAD_DEFAULTS.get(model_id, {}))
+        for key, value in updates.items():
+            if value is None:
+                current.pop(key, None)
+            else:
+                current[key] = value
+        if current:
+            MODEL_LOAD_DEFAULTS[model_id] = current
+        else:
+            MODEL_LOAD_DEFAULTS.pop(model_id, None)
+        return dict(current)
+
+
+def _extract_model_and_load_defaults(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    model_id = payload.get("model")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise HTTPException(status_code=400, detail="'model' is required and must be a non-empty string")
+    model_id = model_id.strip()
+
+    updates: dict[str, Any] = {}
+
+    if "temperature" in payload:
+        value = payload.get("temperature")
+        if value is None:
+            updates["temperature"] = None
+        else:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(status_code=400, detail="'temperature' must be a number") from e
+            if numeric < 0:
+                raise HTTPException(status_code=400, detail="'temperature' must be >= 0")
+            updates["temperature"] = numeric
+
+    if "top_p" in payload:
+        value = payload.get("top_p")
+        if value is None:
+            updates["top_p"] = None
+        else:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(status_code=400, detail="'top_p' must be a number") from e
+            if numeric < 0 or numeric > 1:
+                raise HTTPException(status_code=400, detail="'top_p' must be between 0 and 1")
+            updates["top_p"] = numeric
+
+    if "top_k" in payload:
+        value = payload.get("top_k")
+        if value is None:
+            updates["top_k"] = None
+        else:
+            if isinstance(value, bool):
+                raise HTTPException(status_code=400, detail="'top_k' must be an integer")
+            try:
+                numeric = int(value)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(status_code=400, detail="'top_k' must be an integer") from e
+            if numeric < 1:
+                raise HTTPException(status_code=400, detail="'top_k' must be >= 1")
+            updates["top_k"] = numeric
+
+    if "system_prompt" in payload:
+        value = payload.get("system_prompt")
+        if value is None:
+            updates["system_prompt"] = None
+        else:
+            if not isinstance(value, str):
+                raise HTTPException(status_code=400, detail="'system_prompt' must be a string")
+            prompt = value.strip()
+            updates["system_prompt"] = prompt if prompt else None
+
+    return model_id, updates
+
+
+def _attach_model_load_defaults(models: list[dict]) -> None:
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        model_id = model.get("id")
+        if not isinstance(model_id, str):
+            continue
+        defaults = _get_model_load_defaults(model_id)
+        if not defaults:
+            continue
+        status = model.get("status")
+        if not isinstance(status, dict):
+            status = {}
+            model["status"] = status
+        status["synapse_defaults"] = defaults
+
+
+def _apply_model_load_defaults_to_payload(payload: dict[str, Any], model_id: str) -> list[str]:
+    defaults = _get_model_load_defaults(model_id)
+    if not defaults:
+        return []
+
+    applied: list[str] = []
+    for key in ("temperature", "top_p", "top_k"):
+        if key in defaults and key not in payload:
+            payload[key] = defaults[key]
+            applied.append(key)
+
+    system_prompt = defaults.get("system_prompt")
+    if isinstance(system_prompt, str) and system_prompt:
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            messages = []
+            payload["messages"] = messages
+
+        has_system_message = any(
+            isinstance(message, dict) and message.get("role") == "system"
+            for message in messages
+        )
+        if not has_system_message:
+            messages.insert(0, {"role": "system", "content": system_prompt})
+            applied.append("system_prompt")
+
+    return applied
 
 
 async def _list_router_models(router_url: str) -> list[dict]:
@@ -237,7 +370,13 @@ async def chat_completions(request: Request):
 
     selected_model, reason = _select_chat_model(payload)
     payload["model"] = selected_model
-    logger.info("Chat model selection -> model=%s reason=%s", selected_model, reason)
+    applied_defaults = _apply_model_load_defaults_to_payload(payload, selected_model)
+    logger.info(
+        "Chat model selection -> model=%s reason=%s defaults=%s",
+        selected_model,
+        reason,
+        ",".join(applied_defaults) if applied_defaults else "none",
+    )
 
     await _ensure_router_model_loaded(router_url, selected_model)
 
@@ -281,6 +420,17 @@ async def list_router_models():
         f"{backend_url}/models",
         timeout_type="default",
     )
+    if resp.status_code != 200:
+        return _proxy_response(resp)
+    try:
+        data = resp.json()
+    except ValueError:
+        return _proxy_response(resp)
+    if isinstance(data, dict):
+        models = data.get("data")
+        if isinstance(models, list):
+            _attach_model_load_defaults(models)
+        return JSONResponse(content=data, status_code=resp.status_code)
     return _proxy_response(resp)
 
 
@@ -290,14 +440,37 @@ async def load_router_model(request: Request):
     config = _get_config()
     backend_url = _require_backend_url(config, "llama-router")
     body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Request body is required")
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e.msg}") from e
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON body must be an object")
+
+    model_id, updates = _extract_model_and_load_defaults(payload)
+    active_defaults = _get_model_load_defaults(model_id)
+    if updates:
+        active_defaults = _update_model_load_defaults(model_id, updates)
+
     resp = await client.request(
         "llama-router",
         "POST",
         f"{backend_url}/models/load",
-        content=body,
-        headers={"Content-Type": "application/json"},
+        json={"model": model_id},
         timeout_type="llm",
     )
+    if resp.status_code != 200:
+        return _proxy_response(resp)
+    try:
+        data = resp.json()
+    except ValueError:
+        return _proxy_response(resp)
+    if isinstance(data, dict):
+        if active_defaults:
+            data["synapse_defaults"] = active_defaults
+        return JSONResponse(content=data, status_code=resp.status_code)
     return _proxy_response(resp)
 
 
@@ -333,7 +506,10 @@ async def list_models():
         )
         if resp.status_code == 200:
             data = resp.json()
-            for m in data.get("data", []):
+            models_from_router = data.get("data", [])
+            if isinstance(models_from_router, list):
+                _attach_model_load_defaults(models_from_router)
+            for m in models_from_router:
                 models.append(m)
     except Exception as e:
         logger.warning("Failed to list llama-embed models: %s", e)
