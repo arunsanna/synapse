@@ -1,6 +1,5 @@
-# Synapse — Backend Registry
-# Deployed as ConfigMap, mounted at /config/backends.yaml in the gateway pod.
-# Mounted as ConfigMap at /config/backends.yaml in the gateway pod.
+# Synapse backend registry.
+# Deployed as ConfigMap and mounted at /config/backends.yaml in the gateway pod.
 
 backends:
   # --- LLM ---
@@ -19,19 +18,17 @@ backends:
   #   type: openai-compatible
   #   health: /health
 
-  # --- Speech ---
+  # --- Speech + Audio ---
   chatterbox-tts:
     url: http://chatterbox-tts.llm-infra.svc.cluster.local:8004
     type: chatterbox
     health: /api/ui/initial-data
 
-  # --- Phase 2: STT ---
   whisper-stt:
     url: http://whisper-stt.llm-infra.svc.cluster.local:8000
     type: faster-whisper
     health: /health
 
-  # --- Phase 3: Speaker + Audio ---
   pyannote-speaker:
     url: http://pyannote-speaker.llm-infra.svc.cluster.local:8000
     type: pyannote
@@ -45,6 +42,10 @@ backends:
 routes:
   /v1/embeddings: llama-embed
   /v1/chat/completions: llama-router
+  /models: llama-router
+  /models/load: llama-router
+  /models/unload: llama-router
+  /v1/models: llama-router
   /tts/*: chatterbox-tts
   /stt/*: whisper-stt
   /speakers/*: pyannote-speaker

@@ -8,7 +8,7 @@ Endpoints:
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 from .backend_client import client
@@ -24,6 +24,7 @@ _MEDIA_TYPES = {
     "flac": "audio/flac",
     "ogg": "audio/ogg",
 }
+_SUPPORTED_OUTPUT_FORMATS = tuple(_MEDIA_TYPES.keys())
 
 
 def _get_config():
@@ -68,13 +69,20 @@ async def convert(
     bitrate: Optional[str] = Form(None),
 ):
     """Convert audio between formats. Proxied to DeepFilterNet (ffmpeg)."""
+    normalized_format = output_format.strip().lower()
+    if normalized_format not in _SUPPORTED_OUTPUT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported output_format '{output_format}'. Use one of: {', '.join(_SUPPORTED_OUTPUT_FORMATS)}",
+        )
+
     config = _get_config()
     backend_url = get_backend_url(config, "deepfilter-audio")
 
     audio_data = await file.read()
 
     files = [("file", (file.filename or "audio.wav", audio_data, file.content_type or "audio/wav"))]
-    data = {"output_format": output_format}
+    data = {"output_format": normalized_format}
     if sample_rate is not None:
         data["sample_rate"] = str(sample_rate)
     if bitrate is not None:
@@ -93,9 +101,9 @@ async def convert(
             content={"error": "Audio backend error", "detail": resp.text},
         )
 
-    media_type = _MEDIA_TYPES.get(output_format, "application/octet-stream")
+    media_type = _MEDIA_TYPES[normalized_format]
     return Response(
         content=resp.content,
         media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename=converted.{output_format}"},
+        headers={"Content-Disposition": f"attachment; filename=converted.{normalized_format}"},
     )

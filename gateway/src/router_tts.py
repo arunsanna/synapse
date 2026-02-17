@@ -25,6 +25,16 @@ logger = logging.getLogger(__name__)
 
 # Cache: voice_id → filename returned by Chatterbox /upload_reference
 _ref_upload_cache: dict[str, str] = {}
+_MAX_VOICE_FILES = 10
+_MAX_VOICE_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+_ALLOWED_WAV_CONTENT_TYPES = {
+    "",
+    "application/octet-stream",
+    "audio/wav",
+    "audio/wave",
+    "audio/x-wav",
+    "audio/vnd.wave",
+}
 
 
 def _get_config():
@@ -35,6 +45,29 @@ def _get_config():
 def _get_vm():
     from .main import get_voice_manager
     return get_voice_manager()
+
+
+async def _collect_validated_wav_files(files: list[UploadFile]) -> list[bytes]:
+    """Read uploaded files and enforce basic WAV constraints."""
+    if not files or len(files) > _MAX_VOICE_FILES:
+        raise HTTPException(400, f"Provide 1-{_MAX_VOICE_FILES} WAV reference files")
+
+    audio_data: list[bytes] = []
+    for f in files:
+        content_type = (f.content_type or "").lower()
+        filename = (f.filename or "").lower()
+        is_wav_name = filename.endswith(".wav")
+        is_wav_type = content_type in _ALLOWED_WAV_CONTENT_TYPES
+        if not is_wav_name and not is_wav_type:
+            raise HTTPException(400, f"Only WAV files are supported: {f.filename}")
+
+        data = await f.read()
+        if len(data) < 44:  # WAV header minimum
+            raise HTTPException(400, f"File too small: {f.filename}")
+        if len(data) > _MAX_VOICE_FILE_SIZE:
+            raise HTTPException(400, f"File too large (max 50MB): {f.filename}")
+        audio_data.append(data)
+    return audio_data
 
 
 # --- Voice CRUD (local, backed by PVC) ---
@@ -54,18 +87,7 @@ async def upload_voice(
     files: list[UploadFile] = File(...),
 ):
     """Upload a new voice with 1-10 WAV reference samples."""
-    if not files or len(files) > 10:
-        raise HTTPException(400, "Provide 1-10 WAV reference files")
-
-    max_file_size = 50 * 1024 * 1024  # 50MB per file
-    audio_data = []
-    for f in files:
-        data = await f.read()
-        if len(data) < 44:  # WAV header minimum
-            raise HTTPException(400, f"File too small: {f.filename}")
-        if len(data) > max_file_size:
-            raise HTTPException(400, f"File too large (max 50MB): {f.filename}")
-        audio_data.append(data)
+    audio_data = await _collect_validated_wav_files(files)
 
     vm = _get_vm()
     result = await vm.upload_voice(name, audio_data)
@@ -78,7 +100,7 @@ async def add_references(
     files: list[UploadFile] = File(...),
 ):
     """Add more reference samples to an existing voice."""
-    audio_data = [await f.read() for f in files]
+    audio_data = await _collect_validated_wav_files(files)
 
     vm = _get_vm()
     try:

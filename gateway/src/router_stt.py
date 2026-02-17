@@ -10,10 +10,11 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from .backend_client import client
 from .config import get_backend_url
+from .http_utils import json_or_error_response
 
 router = APIRouter(prefix="/stt", tags=["stt"])
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ async def transcribe(
         timeout_type="stt",
     )
 
-    return JSONResponse(status_code=resp.status_code, content=resp.json())
+    return json_or_error_response(resp, "STT backend error")
 
 
 @router.post("/detect-language")
@@ -69,7 +70,7 @@ async def detect_language(file: UploadFile = File(...)):
         timeout_type="stt",
     )
 
-    return JSONResponse(status_code=resp.status_code, content=resp.json())
+    return json_or_error_response(resp, "STT backend error")
 
 
 @router.post("/stream")

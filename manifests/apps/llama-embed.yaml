@@ -42,7 +42,7 @@ spec:
       containers:
         - name: llama-server
           image: ghcr.io/ggml-org/llama.cpp:server
-          # TODO: Pin to specific version when available (rolling :server tag)
+          # Uses upstream rolling server tag; pin to a fixed digest in production freeze windows.
           args:
             - --model
             - /models/embeddings/mxbai-embed-large-v1_fp16.gguf

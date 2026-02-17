@@ -9,10 +9,10 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, UploadFile
-from fastapi.responses import JSONResponse
 
 from .backend_client import client
 from .config import get_backend_url
+from .http_utils import json_or_error_response
 
 router = APIRouter(prefix="/speakers", tags=["speaker"])
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ async def diarize(
         timeout_type="speaker",
     )
 
-    return JSONResponse(status_code=resp.status_code, content=resp.json())
+    return json_or_error_response(resp, "Speaker backend error")
 
 
 @router.post("/verify")
@@ -78,4 +78,4 @@ async def verify(
         timeout_type="speaker",
     )
 
-    return JSONResponse(status_code=resp.status_code, content=resp.json())
+    return json_or_error_response(resp, "Speaker backend error")

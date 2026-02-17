@@ -1,7 +1,8 @@
 .PHONY: help deploy deploy-infra deploy-embed deploy-gateway deploy-tts deploy-phase1 \
 	deploy-llm deploy-stt deploy-speaker deploy-audio \
-	build-gateway test-health test-embed test-tts logs validate clean status \
-	show-routes
+	build-gateway test-health test-embed test-tts logs logs-embed logs-llm \
+	logs-gateway logs-tts logs-stt logs-speaker logs-audio validate clean \
+	status show-routes
 
 NAMESPACE ?= llm-infra
 KUBECTL ?= kubectl
