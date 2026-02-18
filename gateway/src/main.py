@@ -1139,6 +1139,81 @@ _DASHBOARD_HTML = """\
             margin-bottom: 0.85rem;
         }
 
+        .model-source-shell {
+            border: 1px solid rgba(42, 42, 58, 0.88);
+            background: rgba(12, 14, 22, 0.75);
+            clip-path: var(--chamfer-sm);
+            padding: 0.7rem;
+            margin-bottom: 0.85rem;
+        }
+
+        .model-source-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 0.55rem;
+        }
+
+        .model-source-card {
+            border: 1px solid rgba(42, 42, 58, 0.82);
+            background: rgba(9, 11, 18, 0.75);
+            clip-path: var(--chamfer-sm);
+            padding: 0.5rem 0.6rem;
+        }
+
+        .model-source-title {
+            font-size: 0.64rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: #8fe6ff;
+            margin-bottom: 0.34rem;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .model-source-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.7rem;
+            padding: 0.12rem 0;
+            border-bottom: 1px solid rgba(42, 42, 58, 0.55);
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.68rem;
+        }
+
+        .model-source-row:last-child {
+            border-bottom: 0;
+        }
+
+        .model-source-key {
+            color: #90aec9;
+            text-transform: lowercase;
+            word-break: break-word;
+        }
+
+        .model-source-value {
+            color: #d8f2ff;
+            text-align: right;
+            word-break: break-word;
+        }
+
+        .model-source-meta {
+            margin-top: 0.35rem;
+            font-size: 0.62rem;
+            letter-spacing: 0.06em;
+            color: #86a3bc;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .model-source-link {
+            color: #79d7ff;
+            text-decoration: none;
+            border-bottom: 1px dashed rgba(121, 215, 255, 0.4);
+        }
+
+        .model-source-link:hover {
+            color: #bff0ff;
+            border-bottom-color: rgba(191, 240, 255, 0.7);
+        }
+
         .model-profile-grid {
             display: grid;
             gap: 0.7rem;
@@ -1194,6 +1269,37 @@ _DASHBOARD_HTML = """\
         .model-profile-textarea {
             min-height: 82px;
             resize: vertical;
+        }
+
+        .model-profile-range-wrap {
+            display: grid;
+            gap: 0.36rem;
+        }
+
+        .model-profile-slider {
+            width: 100%;
+            accent-color: #00d4ff;
+            cursor: pointer;
+        }
+
+        .model-profile-range-meta {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 0.5rem;
+            align-items: center;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.62rem;
+            letter-spacing: 0.06em;
+            color: #8ba8c1;
+        }
+
+        .model-profile-range-meta span:last-child {
+            text-align: right;
+        }
+
+        .model-profile-range-value {
+            color: #98f2d2;
+            text-align: center;
         }
 
         .model-profile-help {
@@ -1652,6 +1758,36 @@ _DASHBOARD_HTML = """\
             },
         };
 
+        const MODEL_CARD_HINTS = [
+            {
+                pattern: /Nemotron-Nano-3-30B-A3B/i,
+                links: [
+                    {label: 'NVIDIA BF16 Card', url: 'https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16'},
+                    {label: 'GGUF Conversion', url: 'https://huggingface.co/ggml-org/Nemotron-Nano-3-30B-A3B-GGUF'},
+                ],
+            },
+            {
+                pattern: /gpt-oss-120b/i,
+                links: [{label: 'GGUF Card', url: 'https://huggingface.co/unsloth/gpt-oss-120b-GGUF'}],
+            },
+            {
+                pattern: /MiniMax-M2\\.5/i,
+                links: [{label: 'GGUF Card', url: 'https://huggingface.co/unsloth/MiniMax-M2.5-GGUF'}],
+            },
+            {
+                pattern: /Qwen3-8B-Q4_K_M/i,
+                links: [{label: 'GGUF Card', url: 'https://huggingface.co/unsloth/Qwen3-8B-GGUF'}],
+            },
+            {
+                pattern: /Qwen2\\.5-Coder-7B-Instruct-Q4_K_M/i,
+                links: [{label: 'GGUF Card', url: 'https://huggingface.co/unsloth/Qwen2.5-Coder-7B-Instruct-GGUF'}],
+            },
+            {
+                pattern: /glm-4\\.7-flash-claude-4\\.5-opus/i,
+                links: [{label: 'GGUF Card', url: 'https://huggingface.co/TeichAI/GLM-4.7-Flash-Claude-Opus-4.5-High-Reasoning-Distill-GGUF'}],
+            },
+        ];
+
         function announce(message) {
             const region = document.getElementById('sr-live-region');
             if (!region) return;
@@ -1745,6 +1881,103 @@ _DASHBOARD_HTML = """\
                 </div>`).join('')}</div>`;
         }
 
+        function parseRuntimeArgMap(args) {
+            const map = {};
+            const pairs = parseRuntimeArgs(args);
+            pairs.forEach((pair) => {
+                if (typeof pair.key === 'string' && pair.key.startsWith('--')) {
+                    map[pair.key] = String(pair.value ?? '');
+                }
+            });
+            return map;
+        }
+
+        function inferModelCardLinks(modelId) {
+            const id = String(modelId || '');
+            for (const hint of MODEL_CARD_HINTS) {
+                if (hint.pattern.test(id)) {
+                    return hint.links;
+                }
+            }
+            return [{
+                label: 'Hugging Face Search',
+                url: `https://huggingface.co/models?search=${encodeURIComponent(id)}`,
+            }];
+        }
+
+        function renderSourceRows(rows) {
+            if (!Array.isArray(rows) || rows.length === 0) {
+                return '<div class="model-source-meta">No values available.</div>';
+            }
+            return rows.map((row) => `
+                <div class="model-source-row">
+                    <div class="model-source-key">${escapeHtml(row.key || '-')}</div>
+                    <div class="model-source-value">${escapeHtml(row.value || '-')}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderSourceTruthPanel(modelId, schema, profilePayload) {
+            const model = modelRegistry.get(modelId) || {};
+            const status = model.status || {};
+            const runtimeMap = parseRuntimeArgMap(Array.isArray(status.args) ? status.args : []);
+            const profileValues = (profilePayload && typeof profilePayload === 'object' && profilePayload.values && typeof profilePayload.values === 'object')
+                ? profilePayload.values
+                : {};
+            const fields = Array.isArray(schema?.fields) ? schema.fields : [];
+
+            const runtimeRows = [
+                {key: 'status', value: String(status.value || 'unknown')},
+                {key: '--ctx-size', value: String(runtimeMap['--ctx-size'] || '-')},
+                {key: '--batch-size', value: String(runtimeMap['--batch-size'] || '-')},
+                {key: '--ubatch-size', value: String(runtimeMap['--ubatch-size'] || '-')},
+                {key: '--threads', value: String(runtimeMap['--threads'] || '-')},
+                {key: '--threads-batch', value: String(runtimeMap['--threads-batch'] || '-')},
+                {key: '--parallel', value: String(runtimeMap['--parallel'] || '-')},
+            ];
+
+            const profileRows = Object.entries(profileValues).map(([key, value]) => ({
+                key,
+                value: value === null || value === undefined ? '(unset)' : String(value),
+            }));
+
+            const boundRows = fields
+                .filter((field) => field && (field.type === 'number' || field.type === 'integer'))
+                .map((field) => ({
+                    key: field.name || 'param',
+                    value: `${field.min ?? '-'} .. ${field.max ?? '-'} (default ${field.default ?? '-'})`,
+                }));
+
+            const links = inferModelCardLinks(modelId).map((link) => (
+                `<a class="model-source-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label)}</a>`
+            )).join(' · ');
+
+            return `
+                <div class="model-source-grid">
+                    <div class="model-source-card">
+                        <div class="model-source-title">Effective Runtime (Live)</div>
+                        ${renderSourceRows(runtimeRows)}
+                        <div class="model-source-meta">Source: <code>GET /models</code> → <code>status.args</code></div>
+                    </div>
+                    <div class="model-source-card">
+                        <div class="model-source-title">Saved Model Profile</div>
+                        ${renderSourceRows(profileRows)}
+                        <div class="model-source-meta">Source: <code>GET /models/{id}/profile</code></div>
+                    </div>
+                    <div class="model-source-card">
+                        <div class="model-source-title">Schema Min/Max Bounds</div>
+                        ${renderSourceRows(boundRows)}
+                        <div class="model-source-meta">Source: <code>GET /models/{id}/schema</code></div>
+                    </div>
+                    <div class="model-source-card">
+                        <div class="model-source-title">Reference Model Cards</div>
+                        <div class="model-source-meta">${links}</div>
+                        <div class="model-source-meta">Source: Hugging Face model cards (reference only).</div>
+                    </div>
+                </div>
+            `;
+        }
+
         function encodeDomId(value) {
             return String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
         }
@@ -1795,11 +2028,90 @@ _DASHBOARD_HTML = """\
             if (type === 'string') {
                 return `<textarea id="${escapeHtml(inputId)}" class="model-profile-textarea" placeholder="(unset)">${escapeHtml(value)}</textarea>`;
             }
-            const htmlType = type === 'integer' ? 'number' : 'number';
+            const htmlType = 'number';
             const minAttr = field.min !== undefined ? ` min="${escapeHtml(String(field.min))}"` : '';
             const maxAttr = field.max !== undefined ? ` max="${escapeHtml(String(field.max))}"` : '';
             const stepAttr = field.step !== undefined ? ` step="${escapeHtml(String(field.step))}"` : '';
-            return `<input id="${escapeHtml(inputId)}" class="model-profile-input" type="${htmlType}"${minAttr}${maxAttr}${stepAttr} value="${escapeHtml(value)}" placeholder="(unset)">`;
+            const sliderId = `${inputId}__slider`;
+            const valueBadgeId = `${inputId}__value`;
+            const sliderValue = value !== ''
+                ? value
+                : (field.default !== undefined && field.default !== null && field.default !== ''
+                    ? String(field.default)
+                    : (field.min !== undefined ? String(field.min) : '0'));
+            const hasRange = field.min !== undefined && field.max !== undefined;
+            if (!hasRange) {
+                return `<input id="${escapeHtml(inputId)}" class="model-profile-input" type="${htmlType}"${minAttr}${maxAttr}${stepAttr} value="${escapeHtml(value)}" placeholder="(unset)">`;
+            }
+            return `
+                <div class="model-profile-range-wrap">
+                    <input id="${escapeHtml(inputId)}" class="model-profile-input" type="${htmlType}"${minAttr}${maxAttr}${stepAttr} value="${escapeHtml(value)}" placeholder="(unset)">
+                    <input id="${escapeHtml(sliderId)}" class="model-profile-slider" type="range"${minAttr}${maxAttr}${stepAttr} value="${escapeHtml(sliderValue)}">
+                    <div class="model-profile-range-meta">
+                        <span>min ${escapeHtml(String(field.min))}</span>
+                        <span id="${escapeHtml(valueBadgeId)}" class="model-profile-range-value">${escapeHtml(value || '(unset)')}</span>
+                        <span>max ${escapeHtml(String(field.max))}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function bindProfileRangeInputs(modelId, schema) {
+            const fields = Array.isArray(schema?.fields) ? schema.fields : [];
+            fields.forEach((field) => {
+                if (!field || (field.type !== 'number' && field.type !== 'integer')) return;
+                if (field.min === undefined || field.max === undefined) return;
+                const inputId = modelProfileInputId(modelId, field.name);
+                const sliderId = `${inputId}__slider`;
+                const valueBadgeId = `${inputId}__value`;
+                const inputEl = document.getElementById(inputId);
+                const sliderEl = document.getElementById(sliderId);
+                const valueBadgeEl = document.getElementById(valueBadgeId);
+                if (!inputEl || !sliderEl) return;
+
+                const min = Number(field.min);
+                const max = Number(field.max);
+
+                const setValueBadge = (raw) => {
+                    if (!valueBadgeEl) return;
+                    valueBadgeEl.textContent = raw === '' ? '(unset)' : String(raw);
+                };
+
+                const clampValue = (raw) => {
+                    const n = Number(raw);
+                    if (!Number.isFinite(n)) return null;
+                    let clamped = Math.max(min, Math.min(max, n));
+                    if (field.type === 'integer') {
+                        clamped = Math.round(clamped);
+                    }
+                    return clamped;
+                };
+
+                sliderEl.addEventListener('input', () => {
+                    const n = clampValue(sliderEl.value);
+                    if (n === null) return;
+                    inputEl.value = String(n);
+                    setValueBadge(String(n));
+                });
+
+                const syncFromInput = () => {
+                    const raw = (inputEl.value || '').trim();
+                    if (raw === '') {
+                        setValueBadge('');
+                        return;
+                    }
+                    const n = clampValue(raw);
+                    if (n === null) return;
+                    inputEl.value = String(n);
+                    sliderEl.value = String(n);
+                    setValueBadge(String(n));
+                };
+
+                inputEl.addEventListener('input', syncFromInput);
+                inputEl.addEventListener('change', syncFromInput);
+
+                syncFromInput();
+            });
         }
 
         function renderProfileEditor(modelId, schema, values) {
@@ -1888,8 +2200,12 @@ _DASHBOARD_HTML = """\
 
         async function loadModelProfileEditor(modelId) {
             const host = document.getElementById('model-profile-shell');
+            const sourceHost = document.getElementById('model-source-truth-shell');
             if (!host) return;
             host.innerHTML = '<div class="endpoint-empty">Loading profile schema...</div>';
+            if (sourceHost) {
+                sourceHost.innerHTML = '<div class="endpoint-empty">Loading source-of-truth data...</div>';
+            }
             try {
                 const [schema, profile] = await Promise.all([
                     fetchModelProfileSchema(modelId),
@@ -1897,9 +2213,16 @@ _DASHBOARD_HTML = """\
                 ]);
                 modelProfileSchemaCache.set(modelId, schema);
                 host.innerHTML = renderProfileEditor(modelId, schema, profile.values || {});
+                bindProfileRangeInputs(modelId, schema);
+                if (sourceHost) {
+                    sourceHost.innerHTML = renderSourceTruthPanel(modelId, schema, profile);
+                }
                 setModelProfileStatus('Profile loaded.');
             } catch (e) {
                 host.innerHTML = `<div class="endpoint-empty" style="color:#ff8fa6">Profile load failed: ${escapeHtml(e.message || String(e))}</div>`;
+                if (sourceHost) {
+                    sourceHost.innerHTML = `<div class="endpoint-empty" style="color:#ff8fa6">Source-of-truth load failed: ${escapeHtml(e.message || String(e))}</div>`;
+                }
             }
         }
 
@@ -2021,6 +2344,10 @@ _DASHBOARD_HTML = """\
                 </div>
                 <div class="panel-title">Runtime Args</div>
                 ${renderRuntimeArgs(args)}
+                <div class="panel-title">Source Of Truth</div>
+                <div id="model-source-truth-shell" class="model-source-shell">
+                    <div class="endpoint-empty">Loading source-of-truth data...</div>
+                </div>
                 <div class="panel-title">Model Profile (Generation + Runtime)</div>
                 <div id="model-profile-shell" class="model-profile-shell">
                     <div class="endpoint-empty">Loading profile schema...</div>
