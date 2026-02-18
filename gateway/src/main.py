@@ -1402,20 +1402,6 @@ _DASHBOARD_HTML = """\
                 </div>
                 <div class="model-toolbar">
                     <button id="refresh-models-btn" class="btn focusable">Refresh Models</button>
-                    <div class="model-load-defaults" aria-label="Load defaults">
-                        <label class="load-default-field">Temp
-                            <input id="load-default-temp" class="load-default-input" type="number" min="0" step="0.01" value="1.0">
-                        </label>
-                        <label class="load-default-field">Top P
-                            <input id="load-default-top-p" class="load-default-input" type="number" min="0" max="1" step="0.01" value="0.95">
-                        </label>
-                        <label class="load-default-field">Top K
-                            <input id="load-default-top-k" class="load-default-input" type="number" min="1" step="1" value="40">
-                        </label>
-                        <label class="load-default-field">System Prompt
-                            <input id="load-default-system-prompt" class="load-default-input prompt" type="text" value="You are a helpful assistant. Your name is MiniMax-M2.5 and is built by MiniMax.">
-                        </label>
-                    </div>
                     <span id="model-action-status" class="model-action-status" aria-live="polite">No model actions yet.</span>
                 </div>
                 <div class="table-wrap">
@@ -2236,44 +2222,6 @@ _DASHBOARD_HTML = """\
             });
         }
 
-        function collectLoadDefaultsPayload() {
-            const payload = {};
-
-            const tempRaw = (document.getElementById('load-default-temp')?.value || '').trim();
-            if (tempRaw !== '') {
-                const value = Number(tempRaw);
-                if (!Number.isFinite(value) || value < 0) {
-                    throw new Error('Invalid Temp (must be >= 0)');
-                }
-                payload.temperature = value;
-            }
-
-            const topPRaw = (document.getElementById('load-default-top-p')?.value || '').trim();
-            if (topPRaw !== '') {
-                const value = Number(topPRaw);
-                if (!Number.isFinite(value) || value < 0 || value > 1) {
-                    throw new Error('Invalid Top P (must be between 0 and 1)');
-                }
-                payload.top_p = value;
-            }
-
-            const topKRaw = (document.getElementById('load-default-top-k')?.value || '').trim();
-            if (topKRaw !== '') {
-                const value = Number(topKRaw);
-                if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) {
-                    throw new Error('Invalid Top K (must be an integer >= 1)');
-                }
-                payload.top_k = value;
-            }
-
-            const promptRaw = (document.getElementById('load-default-system-prompt')?.value || '').trim();
-            if (promptRaw !== '') {
-                payload.system_prompt = promptRaw;
-            }
-
-            return payload;
-        }
-
         function applyHealthStaleState(message) {
             const dot = document.getElementById('overall-dot');
             if (dot) dot.className = 'hdr-dot stale';
@@ -2501,16 +2449,7 @@ _DASHBOARD_HTML = """\
             }
             const actionUpper = action.toUpperCase();
             const targetStatus = action === 'unload' ? 'unloaded' : 'loaded';
-            let requestBody = {model: modelId};
-            if (action === 'load') {
-                try {
-                    requestBody = {...requestBody, ...collectLoadDefaultsPayload()};
-                } catch (e) {
-                    setModelActionStatus(`${actionUpper} ${modelId}: ${e.message}`, true);
-                    announce(`${actionUpper} ${modelId} failed.`);
-                    return;
-                }
-            }
+            const requestBody = {model: modelId};
             modelActionInFlight = true;
             setModelButtonsDisabled(true);
             modelPendingActions.set(modelId, action);
