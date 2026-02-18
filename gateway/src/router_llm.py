@@ -99,9 +99,9 @@ BASE_PROFILE_FIELDS: list[dict[str, Any]] = [
         "min": 1,
         "max": 32768,
         "step": 1,
-        "default": 1024,
+        "default": 16384,
         "applies_at": "generation",
-        "description": "Default maximum number of completion tokens per request.",
+        "description": "Default maximum number of completion tokens per request (bounded by router ctx-size).",
     },
 ]
 

@@ -69,7 +69,7 @@ spec:
             - "1"
             - --no-models-autoload
             - --ctx-size
-            - "8192"
+            - "16384"
             - --parallel
             - "1"
             - --batch-size
