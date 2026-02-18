@@ -120,6 +120,10 @@ Synapse reads backend routing from `config/backends.yaml` (mounted in-cluster as
 | `SYNAPSE_GATEWAY_CONFIG_PATH` | `/config/backends.yaml` | Path to backend registry          |
 | `SYNAPSE_VOICE_LIBRARY_DIR`   | `/data/voices`          | Voice reference storage directory |
 | `SYNAPSE_MODEL_PROFILES_PATH` | `/data/voices/model-profiles.json` | Per-model generation profile storage |
+| `SYNAPSE_LLAMA_ROUTER_DEPLOYMENT_NAMESPACE` | `llm-infra` | Namespace of router deployment for runtime reconfigure |
+| `SYNAPSE_LLAMA_ROUTER_DEPLOYMENT_NAME` | `llama-router` | Deployment name for runtime reconfigure |
+| `SYNAPSE_LLAMA_ROUTER_CONTAINER_NAME` | `llama-server` | Container name in router deployment |
+| `SYNAPSE_RUNTIME_RECONFIGURE_TIMEOUT_SECONDS` | `300` | Max seconds to wait for runtime rollout during load |
 | `SYNAPSE_LOG_LEVEL`           | `INFO`                  | Logging level                     |
 
 ## Deployment Commands

@@ -14,6 +14,11 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from .backend_client import client
 from .config import get_backend_url, settings
 from .model_profile_store import ModelProfileStore
+from .router_runtime_controller import (
+    RUNTIME_PROFILE_TO_ROUTER_ARG,
+    RouterRuntimeController,
+    parse_runtime_profile_args,
+)
 
 router = APIRouter(tags=["llm"])
 logger = logging.getLogger(__name__)
@@ -23,8 +28,17 @@ CODER_CHAT_MODEL = "Qwen2.5-Coder-7B-Instruct-Q4_K_M"
 AUTO_MODEL_ALIASES = {"", "auto", "synapse:auto", "synapse-auto"}
 LOAD_TIMEOUT_SECONDS = 240.0
 LOAD_POLL_INTERVAL_SECONDS = 1.0
+ROUTER_LOAD_RETRY_SECONDS = 45.0
+ROUTER_LOAD_RETRY_INTERVAL_SECONDS = 1.0
+ROUTER_MODELS_RETRY_SECONDS = 45.0
+ROUTER_MODELS_RETRY_INTERVAL_SECONDS = 1.0
 MODEL_PROFILE_STORE = ModelProfileStore(settings.model_profiles_path)
 MODEL_PROFILE_LOCK = threading.Lock()
+ROUTER_RUNTIME_CONTROLLER = RouterRuntimeController(
+    namespace=settings.llama_router_deployment_namespace,
+    deployment_name=settings.llama_router_deployment_name,
+    container_name=settings.llama_router_container_name,
+)
 SPLIT_MODEL_ID_RE = re.compile(r"^(?P<base>.+)-(?P<part>\d+)-of-(?P<total>\d+)$")
 REASONING_LINE_RE = re.compile(r"(?im)^\s*reasoning\s*:\s*(low|medium|high)\s*$")
 
@@ -117,6 +131,20 @@ GPT_OSS_PROFILE_FIELDS: list[dict[str, Any]] = [
     }
 ]
 
+RUNTIME_PROFILE_FIELDS: list[dict[str, Any]] = [
+    {
+        "name": "runtime_ctx_size",
+        "label": "Runtime Context Size",
+        "type": "integer",
+        "min": 512,
+        "max": 131072,
+        "step": 1,
+        "default": 16384,
+        "applies_at": "load",
+        "description": "llama-router --ctx-size for this model. Applied during model load and may restart llama-router.",
+    },
+]
+
 PROFILE_DEFAULT_APPLY_KEYS = (
     "temperature",
     "top_p",
@@ -125,6 +153,7 @@ PROFILE_DEFAULT_APPLY_KEYS = (
     "repeat_penalty",
     "max_tokens",
 )
+RUNTIME_PROFILE_KEYS = tuple(RUNTIME_PROFILE_TO_ROUTER_ARG.keys())
 
 CODING_HINT_RE = re.compile(
     r"\b("
@@ -321,6 +350,7 @@ def _infer_model_family(model_id: str) -> str:
 
 def _profile_fields_for_model(model_id: str) -> list[dict[str, Any]]:
     fields = [dict(field) for field in BASE_PROFILE_FIELDS]
+    fields.extend(dict(field) for field in RUNTIME_PROFILE_FIELDS)
     if _infer_model_family(model_id) == "gpt-oss":
         fields.extend(dict(field) for field in GPT_OSS_PROFILE_FIELDS)
     return fields
@@ -338,7 +368,7 @@ def _schema_payload(model_id: str) -> dict[str, Any]:
         "fields": fields,
         "notes": [
             "Generation settings are persisted per model and auto-applied when request values are missing.",
-            "llama.cpp runtime load args (ctx-size, threads, batch, etc.) are currently read-only in Synapse.",
+            "Runtime load settings are applied per model at load-time. When changed, Synapse may patch/restart llama-router before loading the model.",
         ],
     }
 
@@ -465,7 +495,9 @@ def _attach_model_load_defaults(models: list[dict]) -> None:
         status["synapse_profile"] = profile
         status["synapse_defaults"] = {
             key: value for key, value in profile.items()
-            if key in PROFILE_DEFAULT_APPLY_KEYS or key in {"system_prompt", "reasoning_effort"}
+            if key in PROFILE_DEFAULT_APPLY_KEYS
+            or key in RUNTIME_PROFILE_KEYS
+            or key in {"system_prompt", "reasoning_effort"}
         }
 
 
@@ -534,12 +566,15 @@ def _parse_json_object(body: bytes, *, required: bool = True) -> dict[str, Any]:
 
 
 async def _list_router_models(router_url: str) -> list[dict]:
-    resp = await client.request(
-        "llama-router",
-        "GET",
-        f"{router_url}/models",
-        timeout_type="default",
-    )
+    try:
+        resp = await client.request(
+            "llama-router",
+            "GET",
+            f"{router_url}/models",
+            timeout_type="default",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"llama-router /models unavailable: {e}") from e
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502,
@@ -552,9 +587,142 @@ async def _list_router_models(router_url: str) -> list[dict]:
     return models
 
 
+async def _list_router_models_with_retry(router_url: str) -> list[dict]:
+    deadline = time.monotonic() + ROUTER_MODELS_RETRY_SECONDS
+    while True:
+        try:
+            return await _list_router_models(router_url)
+        except HTTPException as e:
+            if e.status_code not in {502, 503, 504}:
+                raise
+            if time.monotonic() >= deadline:
+                raise
+            await asyncio.sleep(ROUTER_MODELS_RETRY_INTERVAL_SECONDS)
+
+
+def _extract_runtime_profile_values(profile: dict[str, Any]) -> dict[str, int]:
+    values: dict[str, int] = {}
+    for key in RUNTIME_PROFILE_TO_ROUTER_ARG:
+        raw = profile.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, bool):
+            continue
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            values[key] = parsed
+    return values
+
+
+def _extract_runtime_values_from_models(models: list[dict]) -> dict[str, int]:
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        status = model.get("status")
+        if not isinstance(status, dict):
+            continue
+        args = status.get("args")
+        if not isinstance(args, list):
+            continue
+        parsed = parse_runtime_profile_args([str(value) for value in args])
+        if parsed:
+            return parsed
+    return {}
+
+
+def _runtime_matches(desired: dict[str, int], current: dict[str, int]) -> bool:
+    for key, expected in desired.items():
+        actual = current.get(key)
+        if actual != expected:
+            return False
+    return True
+
+
+async def _ensure_router_runtime_profile(router_url: str, model_id: str) -> list[dict]:
+    profile = _get_model_profile(model_id)
+    desired_runtime = _extract_runtime_profile_values(profile)
+    models = await _list_router_models_with_retry(router_url)
+    if not desired_runtime:
+        return models
+
+    current_runtime = _extract_runtime_values_from_models(models)
+    if _runtime_matches(desired_runtime, current_runtime):
+        return models
+
+    logger.info(
+        "Applying llama-router runtime profile for model=%s desired=%s current=%s",
+        model_id,
+        desired_runtime,
+        current_runtime,
+    )
+
+    try:
+        await ROUTER_RUNTIME_CONTROLLER.apply_runtime_values(desired_runtime)
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to reconfigure llama-router runtime for '{model_id}': {e}",
+        ) from e
+
+    deadline = time.monotonic() + settings.runtime_reconfigure_timeout_seconds
+    while time.monotonic() < deadline:
+        await asyncio.sleep(ROUTER_MODELS_RETRY_INTERVAL_SECONDS)
+        try:
+            models = await _list_router_models(router_url)
+        except HTTPException:
+            # router can be temporarily unavailable during rollout
+            continue
+        current_runtime = _extract_runtime_values_from_models(models)
+        if _runtime_matches(desired_runtime, current_runtime):
+            logger.info(
+                "llama-router runtime profile applied for model=%s runtime=%s",
+                model_id,
+                current_runtime,
+            )
+            return models
+
+    raise HTTPException(
+        status_code=504,
+        detail=f"Timed out waiting for llama-router runtime update for '{model_id}'",
+    )
+
+
+async def _post_router_load_with_retry(router_url: str, model_id: str):
+    deadline = time.monotonic() + ROUTER_LOAD_RETRY_SECONDS
+    last_resp = None
+    last_error = ""
+    while True:
+        try:
+            resp = await client.request(
+                "llama-router",
+                "POST",
+                f"{router_url}/models/load",
+                json={"model": model_id},
+                timeout_type="llm",
+            )
+            last_resp = resp
+            if resp.status_code == 200:
+                return resp
+            if resp.status_code not in {502, 503, 504}:
+                return resp
+        except Exception as e:
+            last_error = str(e)
+        if time.monotonic() >= deadline:
+            if last_resp is not None:
+                return last_resp
+            raise HTTPException(
+                status_code=503,
+                detail=f"llama-router /models/load unavailable: {last_error or 'unknown error'}",
+            )
+        await asyncio.sleep(ROUTER_LOAD_RETRY_INTERVAL_SECONDS)
+
+
 async def _ensure_router_model_loaded(router_url: str, model_id: str) -> None:
     """Ensure selected model is loaded; unload other loaded models when needed."""
-    models = await _list_router_models(router_url)
+    models = await _ensure_router_runtime_profile(router_url, model_id)
     model = _find_model(models, model_id)
     if model is None:
         raise HTTPException(
@@ -584,13 +752,7 @@ async def _ensure_router_model_loaded(router_url: str, model_id: str) -> None:
         return
 
     if state != "loading":
-        load_resp = await client.request(
-            "llama-router",
-            "POST",
-            f"{router_url}/models/load",
-            json={"model": model_id},
-            timeout_type="llm",
-        )
+        load_resp = await _post_router_load_with_retry(router_url, model_id)
         if load_resp.status_code != 200:
             raise HTTPException(
                 status_code=502,
@@ -600,7 +762,10 @@ async def _ensure_router_model_loaded(router_url: str, model_id: str) -> None:
     deadline = time.monotonic() + LOAD_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         await asyncio.sleep(LOAD_POLL_INTERVAL_SECONDS)
-        models = await _list_router_models(router_url)
+        try:
+            models = await _list_router_models(router_url)
+        except HTTPException:
+            continue
         model = _find_model(models, model_id)
         state = _status_value(model)
         if state == "loaded":
@@ -687,12 +852,15 @@ async def list_router_models():
     """List llama.cpp router models and their load status."""
     config = _get_config()
     backend_url = _require_backend_url(config, "llama-router")
-    resp = await client.request(
-        "llama-router",
-        "GET",
-        f"{backend_url}/models",
-        timeout_type="default",
-    )
+    try:
+        resp = await client.request(
+            "llama-router",
+            "GET",
+            f"{backend_url}/models",
+            timeout_type="default",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"llama-router /models unavailable: {e}") from e
     if resp.status_code != 200:
         return _proxy_response(resp)
     try:
@@ -786,18 +954,14 @@ async def apply_model_profile(model_id: str, request: Request):
     load_model = bool(payload.get("load_model", False))
     load_status = {"requested": load_model, "success": True}
     if load_model:
-        resp = await client.request(
-            "llama-router",
-            "POST",
-            f"{backend_url}/models/load",
-            json={"model": model_id},
-            timeout_type="llm",
-        )
-        if resp.status_code != 200:
+        try:
+            await _ensure_router_model_loaded(backend_url, model_id)
+        except HTTPException as e:
             load_status = {
                 "requested": True,
                 "success": False,
-                "status_code": resp.status_code,
+                "status_code": e.status_code,
+                "detail": str(e.detail),
             }
 
     return {
@@ -821,13 +985,9 @@ async def load_router_model(request: Request):
     if updates:
         active_defaults = _update_model_load_defaults(model_id, updates)
 
-    resp = await client.request(
-        "llama-router",
-        "POST",
-        f"{backend_url}/models/load",
-        json={"model": model_id},
-        timeout_type="llm",
-    )
+    await _ensure_router_runtime_profile(backend_url, model_id)
+
+    resp = await _post_router_load_with_retry(backend_url, model_id)
     if resp.status_code != 200:
         return _proxy_response(resp)
     try:

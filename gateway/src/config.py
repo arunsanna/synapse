@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     gateway_config_path: str = "/config/backends.yaml"
     voice_library_dir: str = "/data/voices"
     model_profiles_path: str = "/data/voices/model-profiles.json"
+    llama_router_deployment_namespace: str = "llm-infra"
+    llama_router_deployment_name: str = "llama-router"
+    llama_router_container_name: str = "llama-server"
+    runtime_reconfigure_timeout_seconds: float = 300.0
     log_level: str = "INFO"
 
     model_config = {"env_prefix": "SYNAPSE_"}

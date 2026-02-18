@@ -2021,7 +2021,7 @@ _DASHBOARD_HTML = """\
                 </div>
                 <div class="panel-title">Runtime Args</div>
                 ${renderRuntimeArgs(args)}
-                <div class="panel-title">Generation Profile</div>
+                <div class="panel-title">Model Profile (Generation + Runtime)</div>
                 <div id="model-profile-shell" class="model-profile-shell">
                     <div class="endpoint-empty">Loading profile schema...</div>
                 </div>

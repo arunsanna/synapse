@@ -72,6 +72,7 @@ spec:
         app: synapse-gateway
         app.kubernetes.io/part-of: synapse
     spec:
+      serviceAccountName: synapse-gateway
       containers:
         - name: gateway
           image: registry.arunlabs.com/synapse-gateway:latest
@@ -83,6 +84,14 @@ spec:
               value: /config/backends.yaml
             - name: SYNAPSE_VOICE_LIBRARY_DIR
               value: /data/voices
+            - name: SYNAPSE_LLAMA_ROUTER_DEPLOYMENT_NAMESPACE
+              value: llm-infra
+            - name: SYNAPSE_LLAMA_ROUTER_DEPLOYMENT_NAME
+              value: llama-router
+            - name: SYNAPSE_LLAMA_ROUTER_CONTAINER_NAME
+              value: llama-server
+            - name: SYNAPSE_RUNTIME_RECONFIGURE_TIMEOUT_SECONDS
+              value: "300"
             - name: SYNAPSE_LOG_LEVEL
               value: INFO
           resources:
@@ -118,6 +127,46 @@ spec:
         - name: voices
           persistentVolumeClaim:
             claimName: synapse-voices
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: synapse-gateway
+  namespace: llm-infra
+  labels:
+    app: synapse-gateway
+    app.kubernetes.io/part-of: synapse
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: synapse-gateway-llama-router-runtime
+  namespace: llm-infra
+  labels:
+    app: synapse-gateway
+    app.kubernetes.io/part-of: synapse
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["llama-router"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: synapse-gateway-llama-router-runtime
+  namespace: llm-infra
+  labels:
+    app: synapse-gateway
+    app.kubernetes.io/part-of: synapse
+subjects:
+  - kind: ServiceAccount
+    name: synapse-gateway
+    namespace: llm-infra
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: synapse-gateway-llama-router-runtime
 ---
 apiVersion: v1
 kind: Service

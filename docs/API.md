@@ -121,7 +121,7 @@ Returns model status from llama-router (`loaded`, `loading`, `unloaded`, or fail
 
 ### POST /models/load
 
-Load a router model and optionally store Synapse-side default generation settings.
+Load a router model and optionally update Synapse per-model profile settings.
 
 ```json
 { "model": "Qwen3-8B-Q4_K_M" }
@@ -135,23 +135,24 @@ Optional fields (stored per model in persisted profile storage):
   "temperature": 1.0,
   "top_p": 0.95,
   "top_k": 40,
+  "runtime_ctx_size": 16384,
   "system_prompt": "You are a helpful assistant. Your name is MiniMax-M2.5 and is built by MiniMax."
 }
 ```
 
 Behavior:
 
-- `llama-router` still receives only `{ "model": ... }`.
-- The optional fields above are applied by Synapse to future `/v1/chat/completions` requests for that model only when the request does not already provide those values.
+- Generation fields are applied by Synapse to future `/v1/chat/completions` requests for that model only when the request does not already provide those values.
+- Runtime fields (for example `runtime_ctx_size`) are applied at load-time. If runtime settings changed, Synapse patches/restarts `llama-router` before model load.
 - `GET /models` exposes configured values under `status.synapse_defaults`.
 
 ### GET /models/{model_id}/schema
 
-Returns editable generation parameter schema (types, ranges, descriptions) for a model.
+Returns editable model profile schema (generation + runtime fields, types, ranges, descriptions).
 
 ### GET /models/{model_id}/profile
 
-Returns persisted generation profile values for the model.
+Returns persisted model profile values for the model.
 
 ### PUT /models/{model_id}/profile
 
@@ -445,4 +446,8 @@ Environment variables:
 | `SYNAPSE_GATEWAY_CONFIG_PATH` | `/config/backends.yaml` | Backend registry path |
 | `SYNAPSE_VOICE_LIBRARY_DIR` | `/data/voices` | Voice library storage path |
 | `SYNAPSE_MODEL_PROFILES_PATH` | `/data/voices/model-profiles.json` | Per-model generation profile storage path |
+| `SYNAPSE_LLAMA_ROUTER_DEPLOYMENT_NAMESPACE` | `llm-infra` | Namespace of router deployment for runtime profile apply |
+| `SYNAPSE_LLAMA_ROUTER_DEPLOYMENT_NAME` | `llama-router` | Deployment name of router target |
+| `SYNAPSE_LLAMA_ROUTER_CONTAINER_NAME` | `llama-server` | Container name patched with runtime args |
+| `SYNAPSE_RUNTIME_RECONFIGURE_TIMEOUT_SECONDS` | `300` | Timeout waiting for runtime rollout when loading models |
 | `SYNAPSE_LOG_LEVEL` | `INFO` | Gateway log level |
