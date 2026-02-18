@@ -32,6 +32,10 @@ Unified gateway for LLM, voice, speech, and audio services.
 | `POST`   | `/v1/embeddings`          | llama-embed      |
 | `POST`   | `/v1/chat/completions`    | llama-router     |
 | `GET`    | `/models`                 | llama-router     |
+| `GET`    | `/models/{model_id}/schema` | Gateway local  |
+| `GET`    | `/models/{model_id}/profile` | Gateway local |
+| `PUT`    | `/models/{model_id}/profile` | Gateway local |
+| `POST`   | `/models/{model_id}/profile/apply` | Gateway local |
 | `POST`   | `/models/load`            | llama-router     |
 | `POST`   | `/models/unload`          | llama-router     |
 | `GET`    | `/v1/models`              | Gateway aggregate |
@@ -123,7 +127,7 @@ Load a router model and optionally store Synapse-side default generation setting
 { "model": "Qwen3-8B-Q4_K_M" }
 ```
 
-Optional fields (stored per model in gateway memory):
+Optional fields (stored per model in persisted profile storage):
 
 ```json
 {
@@ -140,6 +144,38 @@ Behavior:
 - `llama-router` still receives only `{ "model": ... }`.
 - The optional fields above are applied by Synapse to future `/v1/chat/completions` requests for that model only when the request does not already provide those values.
 - `GET /models` exposes configured values under `status.synapse_defaults`.
+
+### GET /models/{model_id}/schema
+
+Returns editable generation parameter schema (types, ranges, descriptions) for a model.
+
+### GET /models/{model_id}/profile
+
+Returns persisted generation profile values for the model.
+
+### PUT /models/{model_id}/profile
+
+Upserts persisted profile values.
+
+```json
+{
+  "values": {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "reasoning_effort": "high"
+  }
+}
+```
+
+Set a value to `null` to unset it. Pass `"replace": true` to replace the whole profile.
+
+### POST /models/{model_id}/profile/apply
+
+Apply persisted profile and optionally trigger model load.
+
+```json
+{ "load_model": true }
+```
 
 ### POST /models/unload
 
@@ -408,4 +444,5 @@ Environment variables:
 | -------- | ------- | ----------- |
 | `SYNAPSE_GATEWAY_CONFIG_PATH` | `/config/backends.yaml` | Backend registry path |
 | `SYNAPSE_VOICE_LIBRARY_DIR` | `/data/voices` | Voice library storage path |
+| `SYNAPSE_MODEL_PROFILES_PATH` | `/data/voices/model-profiles.json` | Per-model generation profile storage path |
 | `SYNAPSE_LOG_LEVEL` | `INFO` | Gateway log level |

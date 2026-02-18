@@ -12,7 +12,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .backend_client import client
-from .config import get_backend_url
+from .config import get_backend_url, settings
+from .model_profile_store import ModelProfileStore
 
 router = APIRouter(tags=["llm"])
 logger = logging.getLogger(__name__)
@@ -22,8 +23,108 @@ CODER_CHAT_MODEL = "Qwen2.5-Coder-7B-Instruct-Q4_K_M"
 AUTO_MODEL_ALIASES = {"", "auto", "synapse:auto", "synapse-auto"}
 LOAD_TIMEOUT_SECONDS = 240.0
 LOAD_POLL_INTERVAL_SECONDS = 1.0
-MODEL_LOAD_DEFAULTS: dict[str, dict[str, Any]] = {}
-MODEL_LOAD_DEFAULTS_LOCK = threading.Lock()
+MODEL_PROFILE_STORE = ModelProfileStore(settings.model_profiles_path)
+MODEL_PROFILE_LOCK = threading.Lock()
+SPLIT_MODEL_ID_RE = re.compile(r"^(?P<base>.+)-(?P<part>\d+)-of-(?P<total>\d+)$")
+REASONING_LINE_RE = re.compile(r"(?im)^\s*reasoning\s*:\s*(low|medium|high)\s*$")
+
+BASE_PROFILE_FIELDS: list[dict[str, Any]] = [
+    {
+        "name": "system_prompt",
+        "label": "System Prompt",
+        "type": "string",
+        "default": "",
+        "applies_at": "generation",
+        "description": "Default system prompt prepended when request has no system message.",
+    },
+    {
+        "name": "temperature",
+        "label": "Temperature",
+        "type": "number",
+        "min": 0.0,
+        "max": 2.0,
+        "step": 0.01,
+        "default": 1.0,
+        "applies_at": "generation",
+        "description": "Higher values increase randomness, lower values make outputs more deterministic.",
+    },
+    {
+        "name": "top_p",
+        "label": "Top P",
+        "type": "number",
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.01,
+        "default": 0.95,
+        "applies_at": "generation",
+        "description": "Nucleus sampling cutoff. Lower values constrain token choices.",
+    },
+    {
+        "name": "top_k",
+        "label": "Top K",
+        "type": "integer",
+        "min": 1,
+        "max": 1000,
+        "step": 1,
+        "default": 40,
+        "applies_at": "generation",
+        "description": "Samples only from the top-K candidate tokens each step.",
+    },
+    {
+        "name": "min_p",
+        "label": "Min P",
+        "type": "number",
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.01,
+        "default": 0.01,
+        "applies_at": "generation",
+        "description": "Minimum token probability floor; useful for llama.cpp where default is often too strict.",
+    },
+    {
+        "name": "repeat_penalty",
+        "label": "Repeat Penalty",
+        "type": "number",
+        "min": 0.0,
+        "max": 3.0,
+        "step": 0.01,
+        "default": 1.0,
+        "applies_at": "generation",
+        "description": "Penalizes repeated tokens. 1.0 disables repetition penalty.",
+    },
+    {
+        "name": "max_tokens",
+        "label": "Max Tokens",
+        "type": "integer",
+        "min": 1,
+        "max": 32768,
+        "step": 1,
+        "default": 1024,
+        "applies_at": "generation",
+        "description": "Default maximum number of completion tokens per request.",
+    },
+]
+
+GPT_OSS_PROFILE_FIELDS: list[dict[str, Any]] = [
+    {
+        "name": "reasoning_effort",
+        "label": "Reasoning Effort",
+        "type": "enum",
+        "choices": ["low", "medium", "high"],
+        "default": "high",
+        "applies_at": "generation",
+        "description": "Injected as 'Reasoning: <level>' in system instructions when absent.",
+    }
+]
+
+PROFILE_DEFAULT_APPLY_KEYS = (
+    "temperature",
+    "top_p",
+    "top_k",
+    "min_p",
+    "repeat_penalty",
+    "max_tokens",
+)
 
 CODING_HINT_RE = re.compile(
     r"\b("
@@ -122,25 +223,213 @@ def _status_failed(model: dict | None) -> bool:
     return bool(isinstance(status, dict) and status.get("failed"))
 
 
+def _parse_split_model_id(model_id: str) -> tuple[str, int, int] | None:
+    match = SPLIT_MODEL_ID_RE.match(model_id)
+    if not match:
+        return None
+    base = match.group("base")
+    try:
+        part = int(match.group("part"))
+        total = int(match.group("total"))
+    except ValueError:
+        return None
+    if part < 1 or total < 2 or part > total:
+        return None
+    return base, part, total
+
+
+def _collapse_split_models(models: list[dict]) -> list[dict]:
+    groups: dict[tuple[str, int], list[tuple[int, dict]]] = {}
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        model_id = model.get("id")
+        if not isinstance(model_id, str):
+            continue
+        parsed = _parse_split_model_id(model_id)
+        if not parsed:
+            continue
+        base, part, total = parsed
+        groups.setdefault((base, total), []).append((part, model))
+
+    if not groups:
+        return models
+
+    collapsed: list[dict] = []
+    emitted: set[tuple[str, int]] = set()
+    for model in models:
+        if not isinstance(model, dict):
+            collapsed.append(model)
+            continue
+        model_id = model.get("id")
+        if not isinstance(model_id, str):
+            collapsed.append(model)
+            continue
+        parsed = _parse_split_model_id(model_id)
+        if not parsed:
+            collapsed.append(model)
+            continue
+        base, _part, total = parsed
+        key = (base, total)
+        if key in emitted:
+            continue
+        emitted.add(key)
+
+        entries = groups.get(key, [])
+        if not entries:
+            collapsed.append(model)
+            continue
+        entries.sort(key=lambda item: item[0])
+        primary = next((entry for part, entry in entries if part == 1), entries[0][1])
+        merged = dict(primary)
+
+        status = merged.get("status")
+        if isinstance(status, dict):
+            merged_status = dict(status)
+            all_values = [
+                entry.get("status", {}).get("value")
+                for _, entry in entries
+                if isinstance(entry.get("status"), dict)
+            ]
+            if any(value == "loaded" for value in all_values):
+                merged_status["value"] = "loaded"
+            elif any(value == "loading" for value in all_values):
+                merged_status["value"] = "loading"
+            elif any(value == "unloading" for value in all_values):
+                merged_status["value"] = "unloading"
+            elif all(value == "unloaded" for value in all_values if isinstance(value, str)):
+                merged_status["value"] = "unloaded"
+            if any(_status_failed(entry) for _, entry in entries):
+                merged_status["failed"] = True
+            merged["status"] = merged_status
+
+        collapsed.append(merged)
+
+    return collapsed
+
+
+def _infer_model_family(model_id: str) -> str:
+    model_lc = model_id.lower()
+    if model_lc.startswith("gpt-oss-"):
+        return "gpt-oss"
+    if "glm-4.7-flash" in model_lc:
+        return "glm-4.7-flash"
+    if "qwen" in model_lc:
+        return "qwen"
+    return "generic"
+
+
+def _profile_fields_for_model(model_id: str) -> list[dict[str, Any]]:
+    fields = [dict(field) for field in BASE_PROFILE_FIELDS]
+    if _infer_model_family(model_id) == "gpt-oss":
+        fields.extend(dict(field) for field in GPT_OSS_PROFILE_FIELDS)
+    return fields
+
+
+def _profile_field_map(model_id: str) -> dict[str, dict[str, Any]]:
+    return {field["name"]: field for field in _profile_fields_for_model(model_id)}
+
+
+def _schema_payload(model_id: str) -> dict[str, Any]:
+    fields = _profile_fields_for_model(model_id)
+    return {
+        "model": model_id,
+        "family": _infer_model_family(model_id),
+        "fields": fields,
+        "notes": [
+            "Generation settings are persisted per model and auto-applied when request values are missing.",
+            "llama.cpp runtime load args (ctx-size, threads, batch, etc.) are currently read-only in Synapse.",
+        ],
+    }
+
+
+def _normalize_profile_updates(model_id: str, raw_updates: dict[str, Any]) -> dict[str, Any]:
+    field_map = _profile_field_map(model_id)
+    normalized: dict[str, Any] = {}
+
+    for key, value in raw_updates.items():
+        spec = field_map.get(key)
+        if spec is None:
+            raise HTTPException(status_code=400, detail=f"Unknown profile field: '{key}'")
+
+        if value is None:
+            normalized[key] = None
+            continue
+
+        kind = spec.get("type")
+        if kind == "number":
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(status_code=400, detail=f"'{key}' must be a number") from e
+            min_value = spec.get("min")
+            max_value = spec.get("max")
+            if isinstance(min_value, (int, float)) and parsed < float(min_value):
+                raise HTTPException(status_code=400, detail=f"'{key}' must be >= {min_value}")
+            if isinstance(max_value, (int, float)) and parsed > float(max_value):
+                raise HTTPException(status_code=400, detail=f"'{key}' must be <= {max_value}")
+            normalized[key] = parsed
+            continue
+
+        if kind == "integer":
+            if isinstance(value, bool):
+                raise HTTPException(status_code=400, detail=f"'{key}' must be an integer")
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(status_code=400, detail=f"'{key}' must be an integer") from e
+            min_value = spec.get("min")
+            max_value = spec.get("max")
+            if isinstance(min_value, int) and parsed < min_value:
+                raise HTTPException(status_code=400, detail=f"'{key}' must be >= {min_value}")
+            if isinstance(max_value, int) and parsed > max_value:
+                raise HTTPException(status_code=400, detail=f"'{key}' must be <= {max_value}")
+            normalized[key] = parsed
+            continue
+
+        if kind == "enum":
+            if not isinstance(value, str):
+                raise HTTPException(status_code=400, detail=f"'{key}' must be a string")
+            parsed = value.strip().lower()
+            choices = spec.get("choices", [])
+            if parsed not in choices:
+                raise HTTPException(status_code=400, detail=f"'{key}' must be one of: {', '.join(choices)}")
+            normalized[key] = parsed
+            continue
+
+        if kind == "string":
+            if not isinstance(value, str):
+                raise HTTPException(status_code=400, detail=f"'{key}' must be a string")
+            parsed = value.strip()
+            normalized[key] = parsed if parsed else None
+            continue
+
+        raise HTTPException(status_code=400, detail=f"Unsupported field type for '{key}'")
+
+    return normalized
+
+
+def _get_model_profile(model_id: str) -> dict[str, Any]:
+    with MODEL_PROFILE_LOCK:
+        return MODEL_PROFILE_STORE.get_profile(model_id)
+
+
+def _set_model_profile(model_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    with MODEL_PROFILE_LOCK:
+        return MODEL_PROFILE_STORE.set_profile(model_id, values)
+
+
+def _update_model_profile(model_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    with MODEL_PROFILE_LOCK:
+        return MODEL_PROFILE_STORE.patch_profile(model_id, updates)
+
+
 def _get_model_load_defaults(model_id: str) -> dict[str, Any]:
-    with MODEL_LOAD_DEFAULTS_LOCK:
-        defaults = MODEL_LOAD_DEFAULTS.get(model_id, {})
-        return dict(defaults)
+    return _get_model_profile(model_id)
 
 
 def _update_model_load_defaults(model_id: str, updates: dict[str, Any]) -> dict[str, Any]:
-    with MODEL_LOAD_DEFAULTS_LOCK:
-        current = dict(MODEL_LOAD_DEFAULTS.get(model_id, {}))
-        for key, value in updates.items():
-            if value is None:
-                current.pop(key, None)
-            else:
-                current[key] = value
-        if current:
-            MODEL_LOAD_DEFAULTS[model_id] = current
-        else:
-            MODEL_LOAD_DEFAULTS.pop(model_id, None)
-        return dict(current)
+    return _update_model_profile(model_id, updates)
 
 
 def _extract_model_and_load_defaults(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -148,60 +437,14 @@ def _extract_model_and_load_defaults(payload: dict[str, Any]) -> tuple[str, dict
     if not isinstance(model_id, str) or not model_id.strip():
         raise HTTPException(status_code=400, detail="'model' is required and must be a non-empty string")
     model_id = model_id.strip()
-
-    updates: dict[str, Any] = {}
-
-    if "temperature" in payload:
-        value = payload.get("temperature")
-        if value is None:
-            updates["temperature"] = None
-        else:
-            try:
-                numeric = float(value)
-            except (TypeError, ValueError) as e:
-                raise HTTPException(status_code=400, detail="'temperature' must be a number") from e
-            if numeric < 0:
-                raise HTTPException(status_code=400, detail="'temperature' must be >= 0")
-            updates["temperature"] = numeric
-
-    if "top_p" in payload:
-        value = payload.get("top_p")
-        if value is None:
-            updates["top_p"] = None
-        else:
-            try:
-                numeric = float(value)
-            except (TypeError, ValueError) as e:
-                raise HTTPException(status_code=400, detail="'top_p' must be a number") from e
-            if numeric < 0 or numeric > 1:
-                raise HTTPException(status_code=400, detail="'top_p' must be between 0 and 1")
-            updates["top_p"] = numeric
-
-    if "top_k" in payload:
-        value = payload.get("top_k")
-        if value is None:
-            updates["top_k"] = None
-        else:
-            if isinstance(value, bool):
-                raise HTTPException(status_code=400, detail="'top_k' must be an integer")
-            try:
-                numeric = int(value)
-            except (TypeError, ValueError) as e:
-                raise HTTPException(status_code=400, detail="'top_k' must be an integer") from e
-            if numeric < 1:
-                raise HTTPException(status_code=400, detail="'top_k' must be >= 1")
-            updates["top_k"] = numeric
-
-    if "system_prompt" in payload:
-        value = payload.get("system_prompt")
-        if value is None:
-            updates["system_prompt"] = None
-        else:
-            if not isinstance(value, str):
-                raise HTTPException(status_code=400, detail="'system_prompt' must be a string")
-            prompt = value.strip()
-            updates["system_prompt"] = prompt if prompt else None
-
+    updates = _normalize_profile_updates(
+        model_id,
+        {
+            key: value
+            for key, value in payload.items()
+            if key != "model"
+        },
+    )
     return model_id, updates
 
 
@@ -212,28 +455,32 @@ def _attach_model_load_defaults(models: list[dict]) -> None:
         model_id = model.get("id")
         if not isinstance(model_id, str):
             continue
-        defaults = _get_model_load_defaults(model_id)
-        if not defaults:
+        profile = _get_model_profile(model_id)
+        if not profile:
             continue
         status = model.get("status")
         if not isinstance(status, dict):
             status = {}
             model["status"] = status
-        status["synapse_defaults"] = defaults
+        status["synapse_profile"] = profile
+        status["synapse_defaults"] = {
+            key: value for key, value in profile.items()
+            if key in PROFILE_DEFAULT_APPLY_KEYS or key in {"system_prompt", "reasoning_effort"}
+        }
 
 
 def _apply_model_load_defaults_to_payload(payload: dict[str, Any], model_id: str) -> list[str]:
-    defaults = _get_model_load_defaults(model_id)
-    if not defaults:
+    profile = _get_model_profile(model_id)
+    if not profile:
         return []
 
     applied: list[str] = []
-    for key in ("temperature", "top_p", "top_k"):
-        if key in defaults and key not in payload:
-            payload[key] = defaults[key]
+    for key in PROFILE_DEFAULT_APPLY_KEYS:
+        if key in profile and key not in payload:
+            payload[key] = profile[key]
             applied.append(key)
 
-    system_prompt = defaults.get("system_prompt")
+    system_prompt = profile.get("system_prompt")
     if isinstance(system_prompt, str) and system_prompt:
         messages = payload.get("messages")
         if not isinstance(messages, list):
@@ -248,7 +495,42 @@ def _apply_model_load_defaults_to_payload(payload: dict[str, Any], model_id: str
             messages.insert(0, {"role": "system", "content": system_prompt})
             applied.append("system_prompt")
 
+    reasoning_effort = profile.get("reasoning_effort")
+    if isinstance(reasoning_effort, str) and reasoning_effort in {"low", "medium", "high"}:
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            messages = []
+            payload["messages"] = messages
+        reasoning_line = f"Reasoning: {reasoning_effort}"
+        system_messages = [
+            message for message in messages
+            if isinstance(message, dict) and message.get("role") == "system"
+        ]
+        if not system_messages:
+            messages.insert(0, {"role": "system", "content": reasoning_line})
+            applied.append("reasoning_effort")
+        else:
+            first_system = system_messages[0]
+            content = first_system.get("content")
+            if isinstance(content, str) and not REASONING_LINE_RE.search(content):
+                first_system["content"] = f"{reasoning_line}\n\n{content}" if content else reasoning_line
+                applied.append("reasoning_effort")
+
     return applied
+
+
+def _parse_json_object(body: bytes, *, required: bool = True) -> dict[str, Any]:
+    if not body:
+        if required:
+            raise HTTPException(status_code=400, detail="Request body is required")
+        return {}
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e.msg}") from e
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON body must be an object")
+    return payload
 
 
 async def _list_router_models(router_url: str) -> list[dict]:
@@ -357,16 +639,7 @@ async def chat_completions(request: Request):
     """Proxy OpenAI-compatible chat completions to llama.cpp router backend."""
     config = _get_config()
     router_url = _require_backend_url(config, "llama-router")
-    body = await request.body()
-
-    if not body:
-        raise HTTPException(status_code=400, detail="Request body is required")
-    try:
-        payload = json.loads(body)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e.msg}") from e
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="JSON body must be an object")
+    payload = _parse_json_object(await request.body(), required=True)
 
     selected_model, reason = _select_chat_model(payload)
     payload["model"] = selected_model
@@ -430,8 +703,110 @@ async def list_router_models():
         models = data.get("data")
         if isinstance(models, list):
             _attach_model_load_defaults(models)
+            data["data"] = _collapse_split_models(models)
         return JSONResponse(content=data, status_code=resp.status_code)
     return _proxy_response(resp)
+
+
+@router.get("/models/{model_id}/schema")
+async def get_model_profile_schema(model_id: str):
+    """Return editable profile schema and field help for a model."""
+    config = _get_config()
+    backend_url = _require_backend_url(config, "llama-router")
+    models = await _list_router_models(backend_url)
+    if _find_model(models, model_id) is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    return _schema_payload(model_id)
+
+
+@router.get("/models/{model_id}/profile")
+async def get_model_profile(model_id: str):
+    """Return persisted profile values for a model."""
+    config = _get_config()
+    backend_url = _require_backend_url(config, "llama-router")
+    models = await _list_router_models(backend_url)
+    if _find_model(models, model_id) is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    return {
+        "model": model_id,
+        "family": _infer_model_family(model_id),
+        "values": _get_model_profile(model_id),
+    }
+
+
+@router.put("/models/{model_id}/profile")
+async def put_model_profile(model_id: str, request: Request):
+    """Create or update persisted profile values for a model."""
+    config = _get_config()
+    backend_url = _require_backend_url(config, "llama-router")
+    models = await _list_router_models(backend_url)
+    if _find_model(models, model_id) is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    payload = _parse_json_object(await request.body(), required=True)
+    replace = False
+    values_payload: dict[str, Any]
+    if "values" in payload:
+        values = payload.get("values")
+        if not isinstance(values, dict):
+            raise HTTPException(status_code=400, detail="'values' must be an object")
+        values_payload = values
+        replace = bool(payload.get("replace", False))
+    else:
+        replace = bool(payload.get("replace", False))
+        values_payload = {k: v for k, v in payload.items() if k != "replace"}
+
+    normalized = _normalize_profile_updates(model_id, values_payload)
+    if replace:
+        active_profile = _set_model_profile(
+            model_id,
+            {key: value for key, value in normalized.items() if value is not None},
+        )
+    else:
+        active_profile = _update_model_profile(model_id, normalized)
+
+    return {
+        "success": True,
+        "model": model_id,
+        "family": _infer_model_family(model_id),
+        "values": active_profile,
+    }
+
+
+@router.post("/models/{model_id}/profile/apply")
+async def apply_model_profile(model_id: str, request: Request):
+    """Apply persisted profile and optionally load the model."""
+    config = _get_config()
+    backend_url = _require_backend_url(config, "llama-router")
+    models = await _list_router_models(backend_url)
+    if _find_model(models, model_id) is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    payload = _parse_json_object(await request.body(), required=False)
+    load_model = bool(payload.get("load_model", False))
+    load_status = {"requested": load_model, "success": True}
+    if load_model:
+        resp = await client.request(
+            "llama-router",
+            "POST",
+            f"{backend_url}/models/load",
+            json={"model": model_id},
+            timeout_type="llm",
+        )
+        if resp.status_code != 200:
+            load_status = {
+                "requested": True,
+                "success": False,
+                "status_code": resp.status_code,
+            }
+
+    return {
+        "success": bool(load_status.get("success", True)),
+        "model": model_id,
+        "family": _infer_model_family(model_id),
+        "values": _get_model_profile(model_id),
+        "load": load_status,
+    }
 
 
 @router.post("/models/load")
@@ -439,15 +814,7 @@ async def load_router_model(request: Request):
     """Load a model in llama.cpp router mode."""
     config = _get_config()
     backend_url = _require_backend_url(config, "llama-router")
-    body = await request.body()
-    if not body:
-        raise HTTPException(status_code=400, detail="Request body is required")
-    try:
-        payload = json.loads(body)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e.msg}") from e
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="JSON body must be an object")
+    payload = _parse_json_object(await request.body(), required=True)
 
     model_id, updates = _extract_model_and_load_defaults(payload)
     active_defaults = _get_model_load_defaults(model_id)
@@ -523,7 +890,11 @@ async def list_models():
         )
         if resp.status_code == 200:
             data = resp.json()
-            for m in data.get("data", []):
+            router_models = data.get("data", [])
+            if isinstance(router_models, list):
+                _attach_model_load_defaults(router_models)
+                router_models = _collapse_split_models(router_models)
+            for m in router_models:
                 models.append(m)
     except KeyError:
         pass

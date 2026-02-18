@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     gateway_config_path: str = "/config/backends.yaml"
     voice_library_dir: str = "/data/voices"
+    model_profiles_path: str = "/data/voices/model-profiles.json"
     log_level: str = "INFO"
 
     model_config = {"env_prefix": "SYNAPSE_"}

@@ -1124,6 +1124,119 @@ _DASHBOARD_HTML = """\
             word-break: break-word;
         }
 
+        .model-arg-help {
+            margin-top: 0.25rem;
+            font-size: 0.66rem;
+            color: #86a3bc;
+            letter-spacing: 0.05em;
+        }
+
+        .model-profile-shell {
+            border: 1px solid rgba(42, 42, 58, 0.88);
+            background: rgba(12, 14, 22, 0.75);
+            clip-path: var(--chamfer-sm);
+            padding: 0.7rem;
+            margin-bottom: 0.85rem;
+        }
+
+        .model-profile-grid {
+            display: grid;
+            gap: 0.7rem;
+        }
+
+        .model-profile-row {
+            border: 1px solid rgba(42, 42, 58, 0.82);
+            background: rgba(9, 11, 18, 0.75);
+            clip-path: var(--chamfer-sm);
+            padding: 0.55rem 0.65rem;
+        }
+
+        .model-profile-topline {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.6rem;
+            margin-bottom: 0.34rem;
+        }
+
+        .model-profile-name {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: #9dd8ff;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .model-profile-scope {
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: #87a0b7;
+            border: 1px solid rgba(42, 42, 58, 0.9);
+            padding: 0.1rem 0.35rem;
+            clip-path: var(--chamfer-sm);
+        }
+
+        .model-profile-input,
+        .model-profile-select,
+        .model-profile-textarea {
+            width: 100%;
+            border: 1px solid rgba(0, 212, 255, 0.4);
+            background: rgba(0, 212, 255, 0.08);
+            color: #d8f6ff;
+            padding: 0.34rem 0.45rem;
+            clip-path: var(--chamfer-sm);
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.72rem;
+            letter-spacing: 0.04em;
+        }
+
+        .model-profile-textarea {
+            min-height: 82px;
+            resize: vertical;
+        }
+
+        .model-profile-help {
+            margin-top: 0.36rem;
+            font-size: 0.66rem;
+            color: #8da7be;
+            letter-spacing: 0.05em;
+        }
+
+        .model-profile-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            margin-top: 0.75rem;
+        }
+
+        .model-profile-status {
+            font-size: 0.7rem;
+            color: #8fd8a9;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .model-profile-status.error {
+            color: #ff8099;
+        }
+
+        .model-profile-notes {
+            margin-top: 0.7rem;
+            border-top: 1px solid rgba(42, 42, 58, 0.82);
+            padding-top: 0.55rem;
+            display: grid;
+            gap: 0.35rem;
+        }
+
+        .model-profile-note {
+            font-size: 0.66rem;
+            color: #87a3ba;
+            letter-spacing: 0.05em;
+        }
+
         .model-json-wrap {
             border: 1px solid rgba(42, 42, 58, 0.95);
             clip-path: var(--chamfer-sm);
@@ -1446,6 +1559,7 @@ _DASHBOARD_HTML = """\
             lastSuccessMs: 0,
         };
         const modelRegistry = new Map();
+        const modelProfileSchemaCache = new Map();
         const modelPendingActions = new Map();
         let modelRegistryRefreshedAt = 0;
         let activeModelModalId = '';
@@ -1610,6 +1724,26 @@ _DASHBOARD_HTML = """\
             return rows;
         }
 
+        const RUNTIME_ARG_HELP = {
+            '--ctx-size': 'Maximum context window in tokens for a single request.',
+            '--threads': 'CPU threads for token generation.',
+            '--threads-batch': 'CPU threads for prompt/batch processing.',
+            '--batch-size': 'Batch token count used during prompt evaluation.',
+            '--ubatch-size': 'Micro-batch token count for compute scheduling.',
+            '--parallel': 'Number of concurrent slots handled by the model server.',
+            '--sleep-idle-seconds': 'Auto-idle timeout before model sleeps.',
+            '--model': 'Path to the GGUF file loaded by llama.cpp.',
+            '--port': 'Internal llama.cpp child server port.',
+            '--host': 'Internal bind host for llama.cpp child server.',
+            '--metrics': 'Enables llama.cpp metrics endpoint.',
+            '--alias': 'Model alias exposed by router mode.',
+        };
+
+        function runtimeArgHelp(key) {
+            const norm = String(key || '').toLowerCase();
+            return RUNTIME_ARG_HELP[norm] || 'Runtime argument from llama.cpp preset.';
+        }
+
         function renderRuntimeArgs(args) {
             const pairs = parseRuntimeArgs(args);
             if (pairs.length === 0) {
@@ -1618,8 +1752,214 @@ _DASHBOARD_HTML = """\
             return `<div class="model-arg-grid">${pairs.map((pair) => `
                 <div class="model-arg-row">
                     <div class="model-arg-key">${escapeHtml(pair.key)}</div>
-                    <div class="model-arg-value">${escapeHtml(pair.value)}</div>
+                    <div class="model-arg-value">
+                        ${escapeHtml(pair.value)}
+                        ${pair.key.startsWith('--') ? `<div class="model-arg-help">${escapeHtml(runtimeArgHelp(pair.key))}</div>` : ''}
+                    </div>
                 </div>`).join('')}</div>`;
+        }
+
+        function encodeDomId(value) {
+            return String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
+        }
+
+        function modelProfileInputId(modelId, fieldName) {
+            return `profile_${encodeDomId(modelId)}_${encodeDomId(fieldName)}`;
+        }
+
+        function setModelProfileStatus(message, isError = false) {
+            const el = document.getElementById('model-profile-status');
+            if (!el) return;
+            el.className = 'model-profile-status' + (isError ? ' error' : '');
+            el.textContent = message;
+        }
+
+        async function fetchModelProfileSchema(modelId) {
+            const resp = await fetch(`/models/${encodeURIComponent(modelId)}/schema`, {cache: 'no-store'});
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(extractApiErrorMessage(data, resp.status));
+            }
+            return data;
+        }
+
+        async function fetchModelProfileValues(modelId) {
+            const resp = await fetch(`/models/${encodeURIComponent(modelId)}/profile`, {cache: 'no-store'});
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(extractApiErrorMessage(data, resp.status));
+            }
+            return data;
+        }
+
+        function renderProfileInput(modelId, field, currentValue) {
+            const inputId = modelProfileInputId(modelId, field.name);
+            const type = field.type || 'string';
+            const value = (currentValue === undefined || currentValue === null) ? '' : String(currentValue);
+            if (type === 'enum') {
+                const choices = Array.isArray(field.choices) ? field.choices : [];
+                const options = ['<option value="">(unset)</option>'].concat(
+                    choices.map((choice) => {
+                        const selected = value === String(choice) ? ' selected' : '';
+                        return `<option value="${escapeHtml(choice)}"${selected}>${escapeHtml(choice)}</option>`;
+                    }),
+                ).join('');
+                return `<select id="${escapeHtml(inputId)}" class="model-profile-select">${options}</select>`;
+            }
+            if (type === 'string') {
+                return `<textarea id="${escapeHtml(inputId)}" class="model-profile-textarea" placeholder="(unset)">${escapeHtml(value)}</textarea>`;
+            }
+            const htmlType = type === 'integer' ? 'number' : 'number';
+            const minAttr = field.min !== undefined ? ` min="${escapeHtml(String(field.min))}"` : '';
+            const maxAttr = field.max !== undefined ? ` max="${escapeHtml(String(field.max))}"` : '';
+            const stepAttr = field.step !== undefined ? ` step="${escapeHtml(String(field.step))}"` : '';
+            return `<input id="${escapeHtml(inputId)}" class="model-profile-input" type="${htmlType}"${minAttr}${maxAttr}${stepAttr} value="${escapeHtml(value)}" placeholder="(unset)">`;
+        }
+
+        function renderProfileEditor(modelId, schema, values) {
+            const fields = Array.isArray(schema?.fields) ? schema.fields : [];
+            const notes = Array.isArray(schema?.notes) ? schema.notes : [];
+            const rows = fields.map((field) => {
+                const currentValue = values ? values[field.name] : undefined;
+                const desc = field.description || '';
+                const defaultText = field.default !== undefined && field.default !== ''
+                    ? ` Default: ${field.default}.`
+                    : '';
+                return `
+                    <div class="model-profile-row">
+                        <div class="model-profile-topline">
+                            <div class="model-profile-name">${escapeHtml(field.label || field.name || 'param')}</div>
+                            <div class="model-profile-scope">${escapeHtml(field.applies_at || 'generation')}</div>
+                        </div>
+                        ${renderProfileInput(modelId, field, currentValue)}
+                        <div class="model-profile-help">${escapeHtml(desc + defaultText)}</div>
+                    </div>
+                `;
+            }).join('');
+            const notesHtml = notes.length > 0
+                ? `<div class="model-profile-notes">${notes.map((note) => `<div class="model-profile-note">${escapeHtml(String(note))}</div>`).join('')}</div>`
+                : '';
+            return `
+                <div class="model-profile-grid">${rows}</div>
+                <div class="model-profile-actions">
+                    <button class="btn focusable" type="button" data-model-profile-save="${escapeHtml(modelId)}">Save Profile</button>
+                    <button class="btn load focusable" type="button" data-model-profile-apply="${escapeHtml(modelId)}">Save + Load</button>
+                    <button class="btn unload focusable" type="button" data-model-profile-reset="${escapeHtml(modelId)}">Reset Profile</button>
+                    <span id="model-profile-status" class="model-profile-status">Profile loaded.</span>
+                </div>
+                ${notesHtml}
+            `;
+        }
+
+        function collectModelProfileValues(modelId, schema) {
+            const fields = Array.isArray(schema?.fields) ? schema.fields : [];
+            const values = {};
+            for (const field of fields) {
+                const inputId = modelProfileInputId(modelId, field.name);
+                const el = document.getElementById(inputId);
+                if (!el) continue;
+                const raw = (el.value || '').trim();
+                if (raw === '') {
+                    values[field.name] = null;
+                    continue;
+                }
+                if (field.type === 'number') {
+                    const n = Number(raw);
+                    if (!Number.isFinite(n)) {
+                        throw new Error(`Invalid value for ${field.label || field.name}`);
+                    }
+                    if (field.min !== undefined && n < Number(field.min)) {
+                        throw new Error(`${field.label || field.name} must be >= ${field.min}`);
+                    }
+                    if (field.max !== undefined && n > Number(field.max)) {
+                        throw new Error(`${field.label || field.name} must be <= ${field.max}`);
+                    }
+                    values[field.name] = n;
+                    continue;
+                }
+                if (field.type === 'integer') {
+                    const n = Number(raw);
+                    if (!Number.isInteger(n)) {
+                        throw new Error(`${field.label || field.name} must be an integer`);
+                    }
+                    if (field.min !== undefined && n < Number(field.min)) {
+                        throw new Error(`${field.label || field.name} must be >= ${field.min}`);
+                    }
+                    if (field.max !== undefined && n > Number(field.max)) {
+                        throw new Error(`${field.label || field.name} must be <= ${field.max}`);
+                    }
+                    values[field.name] = n;
+                    continue;
+                }
+                if (field.type === 'enum') {
+                    values[field.name] = raw.toLowerCase();
+                    continue;
+                }
+                values[field.name] = raw;
+            }
+            return values;
+        }
+
+        async function loadModelProfileEditor(modelId) {
+            const host = document.getElementById('model-profile-shell');
+            if (!host) return;
+            host.innerHTML = '<div class="endpoint-empty">Loading profile schema...</div>';
+            try {
+                const [schema, profile] = await Promise.all([
+                    fetchModelProfileSchema(modelId),
+                    fetchModelProfileValues(modelId),
+                ]);
+                modelProfileSchemaCache.set(modelId, schema);
+                host.innerHTML = renderProfileEditor(modelId, schema, profile.values || {});
+                setModelProfileStatus('Profile loaded.');
+            } catch (e) {
+                host.innerHTML = `<div class="endpoint-empty" style="color:#ff8fa6">Profile load failed: ${escapeHtml(e.message || String(e))}</div>`;
+            }
+        }
+
+        async function resetModelProfile(modelId) {
+            const resp = await fetch(`/models/${encodeURIComponent(modelId)}/profile`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({values: {}, replace: true}),
+            });
+            const payload = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(extractApiErrorMessage(payload, resp.status));
+            }
+            return payload;
+        }
+
+        async function saveModelProfile(modelId, loadModel = false) {
+            const schema = modelProfileSchemaCache.get(modelId);
+            if (!schema) {
+                throw new Error('Profile schema not loaded yet');
+            }
+            const values = collectModelProfileValues(modelId, schema);
+            const saveResp = await fetch(`/models/${encodeURIComponent(modelId)}/profile`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({values}),
+            });
+            const savePayload = await saveResp.json().catch(() => ({}));
+            if (!saveResp.ok) {
+                throw new Error(extractApiErrorMessage(savePayload, saveResp.status));
+            }
+            if (loadModel) {
+                const applyResp = await fetch(`/models/${encodeURIComponent(modelId)}/profile/apply`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({load_model: true}),
+                });
+                const applyPayload = await applyResp.json().catch(() => ({}));
+                if (!applyResp.ok) {
+                    throw new Error(extractApiErrorMessage(applyPayload, applyResp.status));
+                }
+                if (applyPayload.load && applyPayload.load.success === false) {
+                    throw new Error(`Model load failed (status ${applyPayload.load.status_code || 'unknown'})`);
+                }
+            }
+            return savePayload;
         }
 
         function setModalOpenState(isOpen) {
@@ -1695,12 +2035,17 @@ _DASHBOARD_HTML = """\
                 </div>
                 <div class="panel-title">Runtime Args</div>
                 ${renderRuntimeArgs(args)}
+                <div class="panel-title">Generation Profile</div>
+                <div id="model-profile-shell" class="model-profile-shell">
+                    <div class="endpoint-empty">Loading profile schema...</div>
+                </div>
                 <div class="panel-title">Raw Metadata Payload</div>
                 <div class="model-json-wrap">
                     <pre class="model-json">${escapeHtml(JSON.stringify(model, null, 2))}</pre>
                 </div>
             `;
             setModalOpenState(true);
+            loadModelProfileEditor(modelId);
             if (shouldAnnounce) {
                 announce(`${modelId} metadata opened.`);
             }
@@ -2311,6 +2656,60 @@ _DASHBOARD_HTML = """\
             const modalBackdrop = event.target.closest('#model-modal');
             if (modalBackdrop && event.target === modalBackdrop) {
                 closeModelModal();
+                return;
+            }
+
+            const profileSaveBtn = event.target.closest('button[data-model-profile-save]');
+            if (profileSaveBtn) {
+                const modelId = profileSaveBtn.getAttribute('data-model-profile-save');
+                if (!modelId) return;
+                setModelProfileStatus('Saving profile...');
+                saveModelProfile(modelId, false)
+                    .then(async () => {
+                        setModelProfileStatus('Profile saved.');
+                        await refreshModels(true);
+                        await loadModelProfileEditor(modelId);
+                        announce(`Profile saved for ${modelId}.`);
+                    })
+                    .catch((e) => {
+                        setModelProfileStatus(`Save failed: ${e.message}`, true);
+                    });
+                return;
+            }
+
+            const profileApplyBtn = event.target.closest('button[data-model-profile-apply]');
+            if (profileApplyBtn) {
+                const modelId = profileApplyBtn.getAttribute('data-model-profile-apply');
+                if (!modelId) return;
+                setModelProfileStatus('Saving and loading model...');
+                saveModelProfile(modelId, true)
+                    .then(async () => {
+                        setModelProfileStatus('Profile applied and model load requested.');
+                        await refreshModels(true);
+                        await loadModelProfileEditor(modelId);
+                        announce(`Profile applied for ${modelId}.`);
+                    })
+                    .catch((e) => {
+                        setModelProfileStatus(`Apply failed: ${e.message}`, true);
+                    });
+                return;
+            }
+
+            const profileResetBtn = event.target.closest('button[data-model-profile-reset]');
+            if (profileResetBtn) {
+                const modelId = profileResetBtn.getAttribute('data-model-profile-reset');
+                if (!modelId) return;
+                setModelProfileStatus('Resetting profile...');
+                resetModelProfile(modelId)
+                    .then(async () => {
+                        setModelProfileStatus('Profile reset.');
+                        await refreshModels(true);
+                        await loadModelProfileEditor(modelId);
+                        announce(`Profile reset for ${modelId}.`);
+                    })
+                    .catch((e) => {
+                        setModelProfileStatus(`Reset failed: ${e.message}`, true);
+                    });
                 return;
             }
 

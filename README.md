@@ -119,6 +119,7 @@ Synapse reads backend routing from `config/backends.yaml` (mounted in-cluster as
 | ----------------------------- | ----------------------- | --------------------------------- |
 | `SYNAPSE_GATEWAY_CONFIG_PATH` | `/config/backends.yaml` | Path to backend registry          |
 | `SYNAPSE_VOICE_LIBRARY_DIR`   | `/data/voices`          | Voice reference storage directory |
+| `SYNAPSE_MODEL_PROFILES_PATH` | `/data/voices/model-profiles.json` | Per-model generation profile storage |
 | `SYNAPSE_LOG_LEVEL`           | `INFO`                  | Logging level                     |
 
 ## Deployment Commands
