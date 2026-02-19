@@ -55,7 +55,9 @@ Unified gateway for LLM, voice, speech, and audio services.
 | `POST`   | `/audio/denoise`          | deepfilter-audio |
 | `POST`   | `/audio/convert`          | deepfilter-audio |
 
-Non-OpenAPI UI routes: `GET /`, `GET /ui`, `GET /dashboard`.
+Non-OpenAPI UI routes: `GET /`, `GET /ui`, `GET /dashboard`, `GET /dashboard/login?access_token=...`, `GET /events/terminal` (SSE).
+Dashboard and terminal feed endpoints are token-gated by `SYNAPSE_DASHBOARD_ACCESS_TOKEN`.
+`/events/terminal` includes `instance` on each event. With `SYNAPSE_TERMINAL_FEED_BUS_MODE=redis`, all gateway replicas share one unified stream.
 
 ## Health
 
@@ -451,3 +453,21 @@ Environment variables:
 | `SYNAPSE_LLAMA_ROUTER_CONTAINER_NAME` | `llama-server` | Container name patched with runtime args |
 | `SYNAPSE_RUNTIME_RECONFIGURE_TIMEOUT_SECONDS` | `300` | Timeout waiting for runtime rollout when loading models |
 | `SYNAPSE_LOG_LEVEL` | `INFO` | Gateway log level |
+| `SYNAPSE_DASHBOARD_ACCESS_TOKEN` | _unset_ | Required token for dashboard and terminal feed access |
+| `SYNAPSE_DASHBOARD_ACCESS_COOKIE_NAME` | `synapse_dash_token` | HttpOnly dashboard auth cookie name |
+| `SYNAPSE_DASHBOARD_COOKIE_SECURE` | `false` | Set `true` for HTTPS production |
+| `SYNAPSE_TERMINAL_FEED_MODE` | `mock` | `live` enables SSE terminal feed |
+| `SYNAPSE_TERMINAL_FEED_BUFFER_SIZE` | `500` | In-memory feed ring buffer size |
+| `SYNAPSE_TERMINAL_FEED_SUBSCRIBER_QUEUE_SIZE` | `200` | Per-subscriber queue size before dropping oldest entries |
+| `SYNAPSE_TERMINAL_FEED_BACKLOG_LINES` | `80` | Backlog lines emitted on new SSE connection |
+| `SYNAPSE_TERMINAL_FEED_KEEPALIVE_SECONDS` | `15` | SSE keepalive interval |
+| `SYNAPSE_TERMINAL_FEED_MAX_LINE_CHARS` | `1200` | Maximum streamed line length after truncation |
+| `SYNAPSE_TERMINAL_FEED_DEFAULT_LEVEL` | `INFO` | Default minimum feed level |
+| `SYNAPSE_TERMINAL_FEED_REDACT_EXTRA_PATTERNS` | _unset_ | Extra `||`-delimited redact regexes |
+| `SYNAPSE_TERMINAL_FEED_BUS_MODE` | `local` | `local` for per-instance feed, `redis` for shared multi-replica stream |
+| `SYNAPSE_TERMINAL_FEED_REDIS_URL` | _unset_ | Redis DSN used when bus mode is `redis` |
+| `SYNAPSE_TERMINAL_FEED_REDIS_CHANNEL` | `synapse:terminal_feed` | Pub/sub channel for distributed terminal events |
+| `SYNAPSE_TERMINAL_FEED_REDIS_CONNECT_TIMEOUT_SECONDS` | `5` | Redis connect timeout in seconds |
+| `SYNAPSE_INSTANCE_ID` | `HOSTNAME` | Instance identity included in feed events |
+
+Deployment note: gateway manifest expects secret `synapse-gateway-secrets` (example template: `manifests/examples/gateway-secrets.example.yaml`).

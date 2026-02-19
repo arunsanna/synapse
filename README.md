@@ -38,7 +38,7 @@ Instead of exposing each backend separately, Synapse routes requests through a s
 - Per-backend circuit breakers and retries
 - Centralized health aggregation (`GET /health`)
 - OpenAI-compatible endpoints for embeddings and chat
-- Dashboard UI for backend health and model operations (`/`, `/ui`, `/dashboard`)
+- Dashboard UI for backend health, model operations, and live terminal feed (`/`, `/ui`, `/dashboard`)
 
 ## API Surface
 
@@ -74,6 +74,12 @@ UI routes (not part of OpenAPI):
 - `GET /`
 - `GET /ui`
 - `GET /dashboard`
+- `GET /dashboard/login?access_token=...` (sets auth cookie)
+- `GET /events/terminal` (SSE terminal log feed; requires dashboard auth)
+
+Dashboard and terminal feed endpoints are token-gated. Set `SYNAPSE_DASHBOARD_ACCESS_TOKEN` and log in via `/dashboard/login?access_token=...`.
+
+`/events/terminal` includes `instance` on each event. With `SYNAPSE_TERMINAL_FEED_BUS_MODE=redis`, all gateway replicas share a unified feed.
 
 ## Quick Start
 
@@ -125,6 +131,22 @@ Synapse reads backend routing from `config/backends.yaml` (mounted in-cluster as
 | `SYNAPSE_LLAMA_ROUTER_CONTAINER_NAME` | `llama-server` | Container name in router deployment |
 | `SYNAPSE_RUNTIME_RECONFIGURE_TIMEOUT_SECONDS` | `300` | Max seconds to wait for runtime rollout during load |
 | `SYNAPSE_LOG_LEVEL`           | `INFO`                  | Logging level                     |
+| `SYNAPSE_DASHBOARD_ACCESS_TOKEN` | _unset_ | Required token for `/dashboard` and `/events/terminal` access |
+| `SYNAPSE_DASHBOARD_ACCESS_COOKIE_NAME` | `synapse_dash_token` | HttpOnly dashboard session cookie name |
+| `SYNAPSE_DASHBOARD_COOKIE_SECURE` | `false` | Set `true` in production HTTPS |
+| `SYNAPSE_TERMINAL_FEED_MODE` | `mock` | `live` enables SSE feed from gateway logs |
+| `SYNAPSE_TERMINAL_FEED_BUFFER_SIZE` | `500` | In-memory terminal backlog size |
+| `SYNAPSE_TERMINAL_FEED_SUBSCRIBER_QUEUE_SIZE` | `200` | Per-client queue bound before dropping oldest |
+| `SYNAPSE_TERMINAL_FEED_BACKLOG_LINES` | `80` | Initial lines sent when SSE connects |
+| `SYNAPSE_TERMINAL_FEED_KEEPALIVE_SECONDS` | `15` | SSE keepalive cadence |
+| `SYNAPSE_TERMINAL_FEED_MAX_LINE_CHARS` | `1200` | Max characters per streamed log line |
+| `SYNAPSE_TERMINAL_FEED_DEFAULT_LEVEL` | `INFO` | Default minimum level for feed filtering |
+| `SYNAPSE_TERMINAL_FEED_REDACT_EXTRA_PATTERNS` | _unset_ | Extra `||`-separated regex patterns to redact |
+| `SYNAPSE_TERMINAL_FEED_BUS_MODE` | `local` | `local` for per-instance feed, `redis` for shared multi-replica feed |
+| `SYNAPSE_TERMINAL_FEED_REDIS_URL` | _unset_ | Redis DSN used when bus mode is `redis` |
+| `SYNAPSE_TERMINAL_FEED_REDIS_CHANNEL` | `synapse:terminal_feed` | Pub/sub channel for distributed feed events |
+| `SYNAPSE_TERMINAL_FEED_REDIS_CONNECT_TIMEOUT_SECONDS` | `5` | Redis socket connect timeout |
+| `SYNAPSE_INSTANCE_ID` | `HOSTNAME` | Instance identifier stamped into terminal events |
 
 ## Deployment Commands
 
@@ -132,18 +154,39 @@ Synapse reads backend routing from `config/backends.yaml` (mounted in-cluster as
 | --------------------- | ---------------------------------------------------- |
 | `make deploy`         | Deploy all services (infra + all apps)              |
 | `make deploy-phase1`  | Deploy infra + embeddings + TTS + gateway           |
+| `make deploy-gateway-secrets` | Apply gateway auth/terminal-bus secrets (requires editing template first) |
 | `make deploy-llm`     | Deploy llama-router                                 |
+| `make deploy-terminal-feed-bus` | Deploy Redis bus for multi-replica terminal feed |
 | `make deploy-stt`     | Deploy whisper-stt                                  |
 | `make deploy-speaker` | Deploy pyannote-speaker                             |
 | `make deploy-audio`   | Deploy deepfilter-audio                             |
 | `make build-gateway`  | Build and push gateway image                        |
+| `make release-gateway-remote` | Build+push on Forge over SSH, then deploy pinned digest |
 | `make test-health`    | Cluster + gateway health checks                     |
 | `make test-embed`     | Test embedding endpoint                             |
 | `make test-tts`       | Test TTS endpoint                                   |
 | `make logs`           | Tail logs for all Synapse services                  |
+| `make logs-feed-bus`  | Tail terminal feed Redis bus logs                   |
 | `make show-routes`    | Print configured route map                          |
 | `make validate`       | Validate manifests with `kubectl --dry-run=client`  |
 | `make clean`          | Delete Synapse namespace (destructive)              |
+
+Before first gateway deploy, copy/edit `manifests/examples/gateway-secrets.example.yaml` and run:
+
+```bash
+make deploy-gateway-secrets GATEWAY_SECRETS_FILE=manifests/examples/gateway-secrets.example.yaml
+```
+
+For Forge-first releases (no local docker build), run:
+
+```bash
+make release-gateway-remote FORGE_HOST=forge
+```
+
+Optional overrides:
+
+- `GATEWAY_REMOTE_TAG=<tag>` to choose the pushed image tag (default is UTC timestamp)
+- `REMOTE_DIR=/path/on/forge` to control remote sync/build directory
 
 ## Repository Layout
 
