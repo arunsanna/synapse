@@ -76,6 +76,7 @@ spec:
       containers:
         - name: gateway
           image: registry.arunlabs.com/synapse-gateway:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
               name: http
@@ -94,6 +95,35 @@ spec:
               value: "300"
             - name: SYNAPSE_LOG_LEVEL
               value: INFO
+            - name: SYNAPSE_TERMINAL_FEED_MODE
+              value: live
+            - name: SYNAPSE_TERMINAL_FEED_BUS_MODE
+              value: redis
+            - name: SYNAPSE_TERMINAL_FEED_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-gateway-secrets
+                  key: terminal_feed_redis_url
+            - name: SYNAPSE_TERMINAL_FEED_REDIS_CHANNEL
+              value: synapse:terminal_feed
+            - name: SYNAPSE_TERMINAL_FEED_REDIS_CONNECT_TIMEOUT_SECONDS
+              value: "5"
+            - name: SYNAPSE_TERMINAL_FEED_BUFFER_SIZE
+              value: "800"
+            - name: SYNAPSE_TERMINAL_FEED_SUBSCRIBER_QUEUE_SIZE
+              value: "300"
+            - name: SYNAPSE_TERMINAL_FEED_BACKLOG_LINES
+              value: "100"
+            - name: SYNAPSE_TERMINAL_FEED_KEEPALIVE_SECONDS
+              value: "15"
+            - name: SYNAPSE_TERMINAL_FEED_MAX_LINE_CHARS
+              value: "1200"
+            - name: SYNAPSE_TERMINAL_FEED_DEFAULT_LEVEL
+              value: INFO
+            - name: SYNAPSE_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           resources:
             requests:
               memory: 256Mi

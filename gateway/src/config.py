@@ -14,6 +14,19 @@ class Settings(BaseSettings):
     llama_router_container_name: str = "llama-server"
     runtime_reconfigure_timeout_seconds: float = 300.0
     log_level: str = "INFO"
+    terminal_feed_mode: str = "mock"
+    terminal_feed_buffer_size: int = 500
+    terminal_feed_subscriber_queue_size: int = 200
+    terminal_feed_backlog_lines: int = 80
+    terminal_feed_keepalive_seconds: float = 15.0
+    terminal_feed_max_line_chars: int = 1200
+    terminal_feed_default_level: str = "INFO"
+    terminal_feed_redact_extra_patterns: str = ""
+    terminal_feed_bus_mode: str = "local"
+    terminal_feed_redis_url: str = ""
+    terminal_feed_redis_channel: str = "synapse:terminal_feed"
+    terminal_feed_redis_connect_timeout_seconds: float = 5.0
+    instance_id: str = os.getenv("HOSTNAME", "synapse-gateway")
 
     model_config = {"env_prefix": "SYNAPSE_"}
 

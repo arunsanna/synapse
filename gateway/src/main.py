@@ -1,15 +1,18 @@
 """Synapse Gateway — unified AI proxy for ArunLabs Forge cluster."""
 
+import asyncio
 import html
 import logging
 import time as _time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from .backend_client import client
 from .config import load_backends_config, settings
+from .terminal_feed import LogRedactor, TerminalFeed, as_sse, parse_source_filter, validate_level
+from .terminal_feed_bus_redis import RedisTerminalFeedBus
 from .voice_manager import VoiceManager
 
 logger = logging.getLogger(__name__)
@@ -18,6 +21,8 @@ logger = logging.getLogger(__name__)
 _backends_config: dict = {}
 _voice_manager: VoiceManager | None = None
 _start_time: float = 0.0
+_terminal_feed: TerminalFeed | None = None
+_terminal_feed_bus: RedisTerminalFeedBus | None = None
 
 
 def get_backends_config() -> dict:
@@ -30,10 +35,16 @@ def get_voice_manager() -> VoiceManager:
     return _voice_manager
 
 
+def get_terminal_feed() -> TerminalFeed:
+    if _terminal_feed is None:
+        raise RuntimeError("Terminal feed is not initialized")
+    return _terminal_feed
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: load config, init httpx pool, init voice manager."""
-    global _backends_config, _voice_manager, _start_time
+    global _backends_config, _voice_manager, _start_time, _terminal_feed, _terminal_feed_bus
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -48,12 +59,48 @@ async def lifespan(app: FastAPI):
     )
 
     _voice_manager = VoiceManager(library_dir=settings.voice_library_dir)
+    _terminal_feed = TerminalFeed(
+        buffer_size=settings.terminal_feed_buffer_size,
+        subscriber_queue_size=settings.terminal_feed_subscriber_queue_size,
+        max_line_chars=settings.terminal_feed_max_line_chars,
+        instance_id=settings.instance_id,
+        redactor=LogRedactor(settings.terminal_feed_redact_extra_patterns),
+    )
+    _terminal_feed.start(asyncio.get_running_loop())
+    _terminal_feed.attach_handler(logging.getLogger())
+    bus_mode = settings.terminal_feed_bus_mode.strip().lower()
+    if settings.terminal_feed_mode.strip().lower() == "live" and bus_mode == "redis":
+        redis_url = settings.terminal_feed_redis_url.strip()
+        if not redis_url:
+            raise RuntimeError("SYNAPSE_TERMINAL_FEED_REDIS_URL is required when SYNAPSE_TERMINAL_FEED_BUS_MODE=redis")
+        _terminal_feed_bus = RedisTerminalFeedBus(
+            feed=_terminal_feed,
+            redis_url=redis_url,
+            channel=settings.terminal_feed_redis_channel.strip() or "synapse:terminal_feed",
+            instance_id=settings.instance_id,
+            connect_timeout_seconds=settings.terminal_feed_redis_connect_timeout_seconds,
+        )
+        _terminal_feed.set_distributor(_terminal_feed_bus.publish_event)
+        await _terminal_feed_bus.start()
+        logger.info("Terminal feed bus enabled: redis channel=%s", settings.terminal_feed_redis_channel)
+    else:
+        _terminal_feed.set_distributor(None)
+        if bus_mode not in {"", "local"}:
+            logger.warning("Unknown terminal feed bus mode '%s'; falling back to local-only mode", bus_mode)
     await client.start()
     _start_time = _time.time()
     logger.info("Synapse Gateway started")
 
     yield
 
+    if _terminal_feed_bus is not None:
+        await _terminal_feed_bus.stop()
+        _terminal_feed_bus = None
+    if _terminal_feed is not None:
+        _terminal_feed.set_distributor(None)
+        _terminal_feed.detach_handler(logging.getLogger())
+        _terminal_feed.stop()
+        _terminal_feed = None
     await client.stop()
     logger.info("Synapse Gateway stopped")
 
@@ -298,170 +345,91 @@ _DASHBOARD_HTML = """\
             animation: panelSweep 1.2s linear;
         }
 
-        .hero {
-            display: grid;
-            grid-template-columns: minmax(0, 60%) minmax(0, 40%);
-            gap: 1rem;
-            align-items: stretch;
-            min-height: 280px;
-        }
-
-        .hero-copy {
+        /* --- Status Bar (compact header) --- */
+        .status-bar {
             display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            gap: 0.9rem;
-            padding-right: 0.4rem;
-        }
-
-        .eyebrow {
-            color: var(--accent-tertiary);
-            font-family: 'Share Tech Mono', monospace;
-            text-transform: uppercase;
-            letter-spacing: 0.24em;
-            font-size: 0.72rem;
-        }
-
-        .hero-title {
-            font-family: 'Orbitron', 'Share Tech Mono', monospace;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            font-weight: 900;
-            font-size: clamp(2.5rem, 10vw, 5rem);
-            line-height: 0.95;
-            position: relative;
-            color: var(--foreground);
-            filter: drop-shadow(0 0 12px rgba(0, 255, 136, 0.35));
-        }
-
-        .cyber-glitch {
-            animation: glitch 8s steps(1, end) infinite, rgbShift 3.3s steps(2, end) infinite;
-        }
-
-        .cyber-glitch::before,
-        .cyber-glitch::after {
-            content: attr(data-text);
-            position: absolute;
-            inset: 0;
-            pointer-events: none;
-        }
-
-        .cyber-glitch::before {
-            color: var(--foreground);
-            text-shadow: -2px 0 var(--accent-secondary);
-            clip-path: polygon(0 40%, 100% 40%, 100% 58%, 0 58%);
-            transform: translate(-2px, -1px);
-            opacity: 0.5;
-            animation: glitchSliceA 6s steps(1, end) infinite;
-        }
-
-        .cyber-glitch::after {
-            color: var(--foreground);
-            text-shadow: 2px 0 var(--accent-tertiary);
-            clip-path: polygon(0 12%, 100% 12%, 100% 32%, 0 32%);
-            transform: translate(2px, 1px);
-            opacity: 0.45;
-            animation: glitchSliceB 7s steps(1, end) infinite;
-        }
-
-        .hero-subtitle {
-            color: #a9b0bb;
-            max-width: 56ch;
-            font-size: 0.97rem;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            position: relative;
-            display: inline-flex;
             align-items: center;
-            gap: 0.35rem;
-        }
-
-        .hero-subtitle::after {
-            content: "";
-            width: 10px;
-            height: 1.05em;
-            background: var(--accent);
-            animation: blink 1s step-end infinite;
-        }
-
-        .header-meta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            align-items: center;
-        }
-
-        .meta-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
+            gap: 0.8rem;
+            padding: 0.6rem 1rem;
+            background: linear-gradient(140deg, rgba(18, 18, 26, 0.94), rgba(10, 10, 15, 0.88));
             border: 1px solid var(--border);
-            background: rgba(28, 28, 46, 0.55);
-            color: #a4acb8;
-            padding: 0.4rem 0.55rem;
             clip-path: var(--chamfer-sm);
-            min-height: 36px;
-            font-size: 0.72rem;
+            min-height: 44px;
+            flex-wrap: wrap;
+        }
+
+        .status-bar-title {
+            font-family: 'Orbitron', 'Share Tech Mono', monospace;
+            font-weight: 800;
+            font-size: 1.05rem;
+            letter-spacing: 0.12em;
             text-transform: uppercase;
-            letter-spacing: 0.11em;
+            color: var(--foreground);
+            filter: drop-shadow(0 0 6px rgba(0, 255, 136, 0.25));
+            white-space: nowrap;
         }
 
-        .meta-chip code {
-            color: var(--accent);
-            font-size: 0.77rem;
-            letter-spacing: 0.08em;
-        }
-
-        .status-headline {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.6rem;
-            color: #d0d8e3;
-            font-family: 'Share Tech Mono', monospace;
-            letter-spacing: 0.15em;
-            text-transform: uppercase;
-            font-size: 0.78rem;
-        }
-
-        .hdr-dot {
-            width: 11px;
-            height: 11px;
+        .status-bar-dot {
+            width: 9px;
+            height: 9px;
             border-radius: 0;
             display: inline-block;
             transform: rotate(45deg);
             border: 1px solid rgba(255, 255, 255, 0.25);
+            flex-shrink: 0;
         }
 
-        .hdr-dot.healthy {
+        .status-bar-dot.healthy {
             background: var(--accent);
-            box-shadow: var(--shadow-neon);
+            box-shadow: var(--shadow-neon-sm);
         }
 
-        .hdr-dot.degraded {
+        .status-bar-dot.degraded {
             background: #ffb020;
-            box-shadow: 0 0 5px #ffb020, 0 0 14px #ffb02055;
+            box-shadow: 0 0 5px #ffb020, 0 0 10px #ffb02055;
         }
 
-        .hdr-dot.stale {
+        .status-bar-dot.stale {
             background: #5f6f8d;
-            box-shadow: 0 0 5px #5f6f8d, 0 0 10px #5f6f8d50;
         }
 
-        .hero-terminal {
+        .status-bar-sep {
+            width: 1px;
+            height: 18px;
+            background: var(--border);
+            flex-shrink: 0;
+        }
+
+        .status-bar-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: #8a93a3;
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            white-space: nowrap;
+        }
+
+        .status-bar-chip code {
+            color: var(--accent);
+            font-size: 0.72rem;
+            letter-spacing: 0.06em;
+        }
+
+        /* --- Terminal Section (full-width, collapsible) --- */
+        .terminal-section {
             background: rgba(10, 10, 15, 0.92);
             border: 1px solid rgba(0, 212, 255, 0.34);
             clip-path: var(--chamfer-md);
             box-shadow: var(--shadow-neon-tertiary);
-            display: flex;
-            flex-direction: column;
             overflow: hidden;
-            min-height: 100%;
         }
 
-        .terminal-bar {
+        .terminal-toolbar {
             display: flex;
             align-items: center;
-            gap: 0.35rem;
+            gap: 0.4rem;
             padding: 0.45rem 0.7rem;
             border-bottom: 1px solid var(--border);
             background: rgba(28, 28, 46, 0.62);
@@ -469,68 +437,148 @@ _DASHBOARD_HTML = """\
             letter-spacing: 0.14em;
             font-size: 0.67rem;
             color: var(--muted-foreground);
+            flex-wrap: wrap;
         }
 
-        .terminal-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
+        .terminal-toolbar-label {
+            font-weight: 600;
+            margin-right: 0.3rem;
+            white-space: nowrap;
         }
 
-        .terminal-dot.red { background: #ff3366; box-shadow: 0 0 6px #ff336660; }
-        .terminal-dot.yellow { background: #ffb020; box-shadow: 0 0 6px #ffb02060; }
-        .terminal-dot.green { background: var(--accent); box-shadow: 0 0 6px #00ff8860; }
+        .terminal-filters {
+            display: flex;
+            gap: 0.25rem;
+            align-items: center;
+        }
+
+        .terminal-filter-btn {
+            background: rgba(42, 42, 58, 0.6);
+            border: 1px solid var(--border);
+            color: #6b7a8e;
+            padding: 0.18rem 0.45rem;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.62rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.1s;
+            clip-path: var(--chamfer-sm);
+        }
+
+        .terminal-filter-btn.active {
+            color: #d2e8ff;
+            border-color: rgba(0, 212, 255, 0.5);
+            background: rgba(0, 212, 255, 0.12);
+        }
+
+        .terminal-filter-btn.active.level-warning {
+            border-color: rgba(255, 176, 32, 0.5);
+            background: rgba(255, 176, 32, 0.12);
+            color: #ffd27b;
+        }
+
+        .terminal-filter-btn.active.level-error {
+            border-color: rgba(255, 51, 102, 0.5);
+            background: rgba(255, 51, 102, 0.12);
+            color: #ff90a8;
+        }
+
+        .terminal-filter-btn.active.level-critical {
+            border-color: rgba(255, 51, 102, 0.7);
+            background: rgba(255, 51, 102, 0.18);
+            color: #ff6088;
+        }
+
+        .terminal-conn {
+            margin-left: auto;
+            font-size: 0.62rem;
+            letter-spacing: 0.08em;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .terminal-conn.live {
+            color: var(--accent);
+            text-shadow: 0 0 6px rgba(0, 255, 136, 0.45);
+        }
+
+        .terminal-conn.connecting {
+            color: #ffd27b;
+        }
+
+        .terminal-conn.stale {
+            color: #ff90a8;
+        }
+
+        .terminal-toggle {
+            background: rgba(42, 42, 58, 0.6);
+            border: 1px solid var(--border);
+            color: var(--accent-tertiary);
+            padding: 0.18rem 0.5rem;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.62rem;
+            letter-spacing: 0.06em;
+            cursor: pointer;
+            clip-path: var(--chamfer-sm);
+            transition: border-color 0.1s;
+            margin-left: 0.3rem;
+        }
+
+        .terminal-toggle:hover {
+            border-color: var(--accent-tertiary);
+        }
 
         .terminal-body {
-            padding: 0.8rem;
+            padding: 0.6rem 0.8rem;
             font-family: 'Share Tech Mono', monospace;
-            font-size: 0.8rem;
-            color: #93ffc8;
-            display: grid;
-            gap: 0.45rem;
-            flex: 1;
+            font-size: 0.78rem;
+            color: #d2e8ff;
+            display: flex;
+            flex-direction: column;
+            gap: 0.28rem;
+            overflow-y: auto;
+            height: 120px;
+            transition: height 0.25s ease;
+        }
+
+        .terminal-body.expanded {
+            height: 50vh;
         }
 
         .term-line {
-            display: flex;
-            align-items: center;
-            gap: 0.4rem;
-            min-height: 24px;
+            display: grid;
+            grid-template-columns: 60px 180px minmax(0, 1fr);
+            gap: 0.45rem;
+            min-height: 20px;
+            align-items: start;
+            border-bottom: 1px solid rgba(42, 42, 58, 0.45);
+            padding-bottom: 0.24rem;
+            word-break: break-word;
         }
 
-        .terminal-value {
-            color: #d2e8ff;
+        .term-line.system {
+            color: #8ea3ba;
         }
 
-        .terminal-value.good {
-            color: var(--accent);
-            text-shadow: 0 0 7px rgba(0, 255, 136, 0.4);
+        .term-level {
+            color: #8fe6ff;
         }
 
-        .terminal-value.warn {
+        .term-level.warning {
             color: #ffd27b;
-            text-shadow: 0 0 7px rgba(255, 176, 32, 0.4);
         }
 
-        .terminal-value.bad {
+        .term-level.error,
+        .term-level.critical {
             color: #ff90a8;
-            text-shadow: 0 0 7px rgba(255, 51, 102, 0.4);
         }
 
-        .prompt {
-            color: var(--accent);
-            min-width: 10px;
-            text-shadow: 0 0 8px rgba(0, 255, 136, 0.65);
+        .term-src {
+            color: #9cb2cb;
         }
 
-        .cursor {
-            display: inline-block;
-            width: 8px;
-            height: 1em;
-            background: var(--accent);
-            margin-left: 0.2rem;
-            animation: blink 1s step-end infinite;
-            vertical-align: middle;
+        .term-msg {
+            color: #d9e4f1;
         }
 
         .dashboard-grid {
@@ -834,21 +882,6 @@ _DASHBOARD_HTML = """\
             background: rgba(0, 212, 255, 0.16);
         }
 
-        .cap-tag {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.2rem;
-            padding: 0.13rem 0.45rem;
-            border: 1px solid rgba(0, 212, 255, 0.35);
-            background: rgba(0, 212, 255, 0.08);
-            clip-path: var(--chamfer-sm);
-            font-size: 0.68rem;
-            color: #8fe6ff;
-            margin: 0.12rem 0.22rem 0.12rem 0;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-        }
-
         .device-badge {
             display: inline-flex;
             align-items: center;
@@ -869,19 +902,6 @@ _DASHBOARD_HTML = """\
             color: #ff9eff;
             background: rgba(255, 0, 255, 0.1);
         }
-
-        .matrix-live {
-            margin-top: 0.4rem;
-            font-size: 0.7rem;
-            font-family: 'Share Tech Mono', monospace;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: #8aa2b7;
-        }
-
-        .matrix-live.good { color: #7fffbc; }
-        .matrix-live.warn { color: #ffd27b; }
-        .matrix-live.bad { color: #ff8fa6; }
 
         .endpoint-grid {
             display: grid;
@@ -1060,6 +1080,19 @@ _DASHBOARD_HTML = """\
             letter-spacing: 0.12em;
             text-transform: uppercase;
             color: #d4eeff;
+        }
+
+        .model-modal-live {
+            margin-bottom: 0.7rem;
+            font-size: 0.62rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #8ea3ba;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .model-modal-live.stale {
+            color: #ffadad;
         }
 
         .model-meta-grid {
@@ -1360,36 +1393,6 @@ _DASHBOARD_HTML = """\
             white-space: pre;
         }
 
-        @keyframes blink {
-            50% { opacity: 0; }
-        }
-
-        @keyframes glitch {
-            0%, 96%, 100% { transform: translate(0, 0); }
-            97% { transform: translate(-1px, 1px); }
-            98% { transform: translate(2px, -1px) skew(-2deg); }
-            99% { transform: translate(-1px, -2px) skew(2deg); }
-        }
-
-        @keyframes glitchSliceA {
-            0%, 95%, 100% { transform: translate(-2px, -1px); opacity: 0.5; }
-            96% { transform: translate(-4px, 0); opacity: 0.85; }
-            97% { transform: translate(3px, 0); opacity: 0.55; }
-            98% { transform: translate(-2px, 1px); opacity: 0.7; }
-        }
-
-        @keyframes glitchSliceB {
-            0%, 95%, 100% { transform: translate(2px, 1px); opacity: 0.45; }
-            96% { transform: translate(4px, -1px); opacity: 0.9; }
-            97% { transform: translate(-3px, 0); opacity: 0.7; }
-            98% { transform: translate(1px, -1px); opacity: 0.6; }
-        }
-
-        @keyframes rgbShift {
-            0%, 100% { text-shadow: -1px 0 var(--accent-secondary), 1px 0 var(--accent-tertiary); }
-            50% { text-shadow: 1px 0 var(--accent-secondary), -1px 0 var(--accent-tertiary); }
-        }
-
         @keyframes scanline {
             0% { transform: translateY(-120%); }
             100% { transform: translateY(220vh); }
@@ -1401,35 +1404,259 @@ _DASHBOARD_HTML = """\
         }
 
         @media (max-width: 1120px) {
-            .hero { grid-template-columns: 1fr; }
             .dashboard-grid { grid-template-columns: 1fr; }
             .endpoint-grid { grid-template-columns: 1fr; }
             .quick-links { transform: none; grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .quick-links.inline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
 
+        /* --- Bottom Sheet (base, hidden on desktop) --- */
+        .bottom-sheet-backdrop { display: none; }
+        .bottom-sheet { display: none; }
+        .mobile-overflow-btn { display: none; }
+        .mobile-health-chips { display: none; }
+        .mobile-model-bar { display: none; }
+        .mobile-filter-btn { display: none; }
+        .mobile-filter-dropdown { display: none; }
+
         @media (max-width: 700px) {
-            body { padding: 0.85rem; }
+            body {
+                padding: 0.85rem;
+                padding-left: max(0.85rem, env(safe-area-inset-left));
+                padding-right: max(0.85rem, env(safe-area-inset-right));
+                padding-bottom: env(safe-area-inset-bottom);
+            }
             .panel, .cyber-panel { padding: 0.85rem; }
-            .hero-title { font-size: clamp(2.3rem, 13vw, 3.6rem); }
-            .header-meta { display: grid; grid-template-columns: 1fr; }
-            .meta-chip { min-height: 38px; }
-            .backends-grid { grid-template-columns: 1fr; transform: none; }
-            .backend-card { transform: none; }
-            .model-toolbar { flex-direction: column; align-items: flex-start; }
-            .model-meta-grid { grid-template-columns: 1fr; }
-            .model-arg-row { grid-template-columns: 1fr; }
-            .quick-links { grid-template-columns: 1fr; }
-            .quick-links.inline { grid-template-columns: 1fr; }
+            .page { gap: 0.65rem; }
+
+            /* --- Status bar compact --- */
+            .status-bar { gap: 0.4rem; padding: 0.5rem 0.7rem; }
+            .status-bar-title { font-size: 0.85rem; }
+            .status-bar-sep { display: none; }
+            .chip-baseurl { display: none; }
+            .chip-backends { display: none; }
+            .mobile-overflow-btn {
+                display: flex;
+                margin-left: auto;
+                background: none;
+                border: 1px solid var(--border);
+                color: var(--muted-foreground);
+                padding: 4px 8px;
+                border-radius: 4px;
+                cursor: pointer;
+                align-items: center;
+            }
+            .mobile-overflow-btn:active { border-color: var(--accent-tertiary); color: var(--accent-tertiary); }
+
+            /* --- Terminal mobile reformat --- */
+            .terminal-toolbar { flex-wrap: wrap; gap: 0.3rem; position: relative; }
+            .terminal-filters { display: none; }
+            .mobile-filter-btn {
+                display: flex;
+                background: rgba(42, 42, 58, 0.6);
+                border: 1px solid var(--border);
+                color: var(--accent-tertiary);
+                padding: 4px 6px;
+                cursor: pointer;
+                clip-path: var(--chamfer-sm);
+                align-items: center;
+                justify-content: center;
+            }
+            .mobile-filter-dropdown {
+                position: absolute;
+                top: 100%;
+                right: 0;
+                z-index: 15;
+                background: rgba(14, 14, 22, 0.98);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 0.4rem;
+                display: none;
+                flex-direction: column;
+                gap: 0.25rem;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            }
+            .mobile-filter-dropdown.open { display: flex; }
+            .mobile-filter-dropdown .terminal-filter-btn { width: 100%; justify-content: flex-start; }
+            .term-line {
+                display: flex !important;
+                flex-wrap: wrap;
+                gap: 0.2rem 0.4rem;
+            }
+            .term-level { flex-shrink: 0; }
+            .term-src { flex-shrink: 0; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+            .term-msg { flex-basis: 100%; word-break: break-word; }
+            .terminal-body { height: 200px; }
+            .terminal-body.expanded { height: calc(100vh - 160px); }
+
+            /* --- Health chips row --- */
+            .mobile-health-chips {
+                display: flex;
+                gap: 0.45rem;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+                padding: 0.3rem 0;
+                scroll-snap-type: x proximity;
+            }
+            .mobile-health-chips::-webkit-scrollbar { display: none; }
+            .mobile-health-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.35rem;
+                padding: 0.3rem 0.65rem;
+                background: rgba(18, 18, 26, 0.9);
+                border: 1px solid var(--border);
+                border-radius: 20px;
+                font-family: 'Share Tech Mono', monospace;
+                font-size: 0.65rem;
+                font-weight: 600;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                color: #b4c0cd;
+                white-space: nowrap;
+                cursor: pointer;
+                flex-shrink: 0;
+                scroll-snap-align: start;
+                transition: border-color 0.15s;
+            }
+            .mobile-health-chip:active { border-color: var(--accent-tertiary); }
+            .chip-dot {
+                width: 6px; height: 6px;
+                border-radius: 0;
+                transform: rotate(45deg);
+                display: inline-block;
+                flex-shrink: 0;
+            }
+            .chip-dot.healthy { background: var(--accent); box-shadow: var(--shadow-neon-sm); }
+            .chip-dot.unhealthy, .chip-dot.unreachable { background: var(--destructive); }
+            .chip-dot.degraded { background: #ffb020; }
+            .chip-dot.checking, .chip-dot.stale { background: #5f6f8d; }
+
+            /* --- Model quick-action bar --- */
+            .mobile-model-bar {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                padding: 0.55rem 0.85rem;
+                background: linear-gradient(140deg, rgba(18, 18, 26, 0.94), rgba(10, 10, 15, 0.88));
+                border: 1px solid var(--border);
+                clip-path: var(--chamfer-sm);
+                cursor: pointer;
+            }
+            .mobile-model-bar:active { border-color: var(--accent-tertiary); }
+            .mobile-model-bar-label {
+                font-family: 'Share Tech Mono', monospace;
+                font-size: 0.65rem;
+                color: var(--accent-tertiary);
+                text-transform: uppercase;
+                letter-spacing: 0.15em;
+            }
+            .mobile-model-name {
+                flex: 1;
+                font-size: 0.75rem;
+                font-weight: 600;
+                color: #d4eeff;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .mobile-model-status .status-pill { font-size: 0.6rem; padding: 0.15rem 0.45rem; min-height: 0; }
+            .mobile-model-chevron { color: var(--muted-foreground); flex-shrink: 0; }
+
+            /* --- Hide desktop panels, show mobile elements --- */
+            .dashboard-grid { display: none; }
+            .page > section.panel:last-of-type { display: none; }
+
+            /* --- Bottom sheet active on mobile --- */
+            .bottom-sheet-backdrop {
+                display: block;
+                position: fixed;
+                inset: 0;
+                z-index: 40;
+                background: rgba(4, 6, 12, 0.65);
+                backdrop-filter: blur(2px);
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.25s ease;
+            }
+            .bottom-sheet-backdrop.active { opacity: 1; pointer-events: auto; }
+            .bottom-sheet {
+                display: block;
+                position: fixed;
+                bottom: 0; left: 0; right: 0;
+                z-index: 41;
+                max-height: 85vh;
+                background: linear-gradient(180deg, rgba(14, 14, 22, 0.99), rgba(10, 10, 15, 0.99));
+                border-top: 1px solid rgba(0, 212, 255, 0.45);
+                box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.6), 0 -1px 8px rgba(0, 212, 255, 0.15);
+                border-radius: 14px 14px 0 0;
+                transform: translateY(100%);
+                transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+                overscroll-behavior: contain;
+                padding-bottom: env(safe-area-inset-bottom, 0px);
+            }
+            .bottom-sheet.open { transform: translateY(0); }
+            .bs-handle {
+                display: flex;
+                justify-content: center;
+                padding: 10px 0 6px;
+                cursor: grab;
+                position: sticky;
+                top: 0; z-index: 1;
+                background: inherit;
+            }
+            .bs-handle::after {
+                content: "";
+                width: 36px; height: 4px;
+                border-radius: 2px;
+                background: rgba(255, 255, 255, 0.25);
+            }
+            .bs-content { padding: 0 1rem 1rem; }
+            .bs-title {
+                font-family: 'Share Tech Mono', monospace;
+                font-size: 0.72rem;
+                font-weight: 700;
+                color: var(--accent-tertiary);
+                text-transform: uppercase;
+                letter-spacing: 0.18em;
+                margin-bottom: 0.6rem;
+                padding-top: 0.2rem;
+            }
+            .bs-content .backend-card { clip-path: none; cursor: default; }
+            .bs-content .backends-grid { grid-template-columns: 1fr; transform: none; }
+            .bs-content .model-toolbar { flex-direction: column; align-items: flex-start; }
+            .bs-content .model-meta-grid { grid-template-columns: 1fr; }
+            .bs-content .model-arg-row { grid-template-columns: 1fr; }
+            .bs-content .quick-links { grid-template-columns: 1fr; }
+            .bs-content .quick-links.inline { grid-template-columns: 1fr; }
+            .bs-content .table-wrap { overflow-x: auto; }
+            .bs-content table { font-size: 0.72rem; }
+
+            /* --- Model modal as bottom sheet on mobile --- */
+            .model-modal { align-items: flex-end; padding: 0; }
+            .model-modal-panel {
+                width: 100%;
+                max-height: 90vh;
+                border-radius: 14px 14px 0 0;
+                clip-path: none;
+                border: none;
+                border-top: 1px solid rgba(0, 212, 255, 0.45);
+                padding-bottom: env(safe-area-inset-bottom, 0px);
+            }
+            .model-modal-header {
+                position: sticky; top: 0;
+                background: rgba(11, 14, 23, 0.98);
+                z-index: 1;
+                padding-top: 0.75rem;
+            }
+            .model-modal-title { font-size: 0.82rem; }
         }
 
         @media (prefers-reduced-motion: reduce) {
-            .scanline-sweep,
-            .cyber-glitch,
-            .cyber-glitch::before,
-            .cyber-glitch::after,
-            .hero-subtitle::after,
-            .cursor {
+            .scanline-sweep {
                 animation: none !important;
             }
 
@@ -1441,48 +1668,62 @@ _DASHBOARD_HTML = """\
                 transform: none;
                 animation: none !important;
             }
+
+            .terminal-body {
+                transition: none;
+            }
         }
     </style>
 </head>
 <body>
     <div class="scanline-sweep"></div>
     <main class="page">
-        <section class="cyber-panel hero">
-            <div class="hero-copy">
-                <div>
-                    <div class="eyebrow">Forge Node :: Synapse Control Surface</div>
-                    <h1 class="hero-title cyber-glitch" data-text="Synapse Gateway">Synapse Gateway</h1>
-                    <p class="hero-subtitle">Unified AI relay for routing, voice, and live model orchestration</p>
+        <header class="status-bar">
+            <span class="status-bar-title">Synapse Gateway</span>
+            <span id="overall-dot" class="status-bar-dot __OVERALL_STATUS_CLASS__"></span>
+            <span class="status-bar-sep"></span>
+            <span class="status-bar-chip chip-baseurl">Base URL <code>synapse.arunlabs.com</code></span>
+            <span class="status-bar-chip chip-uptime">Uptime <code id="uptime">__UPTIME__</code></span>
+            <span class="status-bar-chip chip-backends">Backends <code>__BACKEND_COUNT__</code></span>
+            <button id="mobile-overflow-btn" class="mobile-overflow-btn" type="button" aria-label="More options">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="3" cy="9" r="1.5" fill="currentColor"/><circle cx="9" cy="9" r="1.5" fill="currentColor"/><circle cx="15" cy="9" r="1.5" fill="currentColor"/></svg>
+            </button>
+        </header>
+
+        <section class="terminal-section">
+            <div class="terminal-toolbar">
+                <span class="terminal-toolbar-label">Terminal Feed</span>
+                <div class="terminal-filters">
+                    <button class="terminal-filter-btn active" data-level="INFO">Info</button>
+                    <button class="terminal-filter-btn active level-warning" data-level="WARNING">Warn</button>
+                    <button class="terminal-filter-btn active level-error" data-level="ERROR">Error</button>
+                    <button class="terminal-filter-btn active level-critical" data-level="CRITICAL">Crit</button>
                 </div>
-                <div>
-                    <div class="status-headline">
-                        <span id="overall-dot" class="hdr-dot __OVERALL_STATUS_CLASS__"></span>
-                        Core health signal
-                    </div>
-                    <div class="header-meta">
-                        <span class="meta-chip">Base URL <code>synapse.arunlabs.com</code></span>
-                        <span class="meta-chip">Uptime <code id="uptime">__UPTIME__</code></span>
-                        <span class="meta-chip">Backends <code>__BACKEND_COUNT__</code></span>
-                    </div>
+                <button id="mobile-filter-btn" class="mobile-filter-btn" type="button" aria-label="Filter log levels" aria-expanded="false">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 2h14L10 8.5V13l-4 2V8.5L1 2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                </button>
+                <div id="mobile-filter-dropdown" class="mobile-filter-dropdown" role="menu">
+                    <button class="terminal-filter-btn active" data-level="INFO">Info</button>
+                    <button class="terminal-filter-btn active level-warning" data-level="WARNING">Warn</button>
+                    <button class="terminal-filter-btn active level-error" data-level="ERROR">Error</button>
+                    <button class="terminal-filter-btn active level-critical" data-level="CRITICAL">Crit</button>
                 </div>
+                <span id="terminal-conn" class="terminal-conn connecting">connecting</span>
+                <button id="terminal-toggle" class="terminal-toggle">Expand</button>
             </div>
-            <div class="hero-terminal">
-                <div class="terminal-bar">
-                    <span class="terminal-dot red"></span>
-                    <span class="terminal-dot yellow"></span>
-                    <span class="terminal-dot green"></span>
-                    Terminal Feed
-                </div>
-                <div class="terminal-body">
-                    <div class="term-line"><span class="prompt">&gt;</span> synapse.gateway init --cluster forge</div>
-                    <div class="term-line"><span class="prompt">&gt;</span> health.aggregate: <span id="term-health" class="terminal-value warn">checking</span></div>
-                    <div class="term-line"><span class="prompt">&gt;</span> backend.online: <span id="term-backends" class="terminal-value warn">0/0</span></div>
-                    <div class="term-line"><span class="prompt">&gt;</span> model.registry: <span id="term-models" class="terminal-value warn">0/0 loaded</span></div>
-                    <div class="term-line"><span class="prompt">&gt;</span> telemetry.age: <span id="term-age" class="terminal-value warn">--</span></div>
-                    <div class="term-line"><span class="prompt">$</span> operator.bus: <span id="term-bus" class="terminal-value">idle</span><span class="cursor"></span></div>
-                </div>
+            <div id="terminal-feed" class="terminal-body" role="log" aria-live="polite" aria-relevant="additions text">
+                <div class="term-line system"><span class="term-level">INFO</span><span class="term-src">gateway.bootstrap</span><span class="term-msg">terminal feed initializing...</span></div>
             </div>
         </section>
+
+        <nav id="mobile-health-chips" class="mobile-health-chips" aria-label="Backend health status"></nav>
+
+        <div id="mobile-model-bar" class="mobile-model-bar" role="button" tabindex="0" aria-label="Model status, tap for controls">
+            <span class="mobile-model-bar-label">Model</span>
+            <span id="mobile-model-name" class="mobile-model-name">No model loaded</span>
+            <span id="mobile-model-status" class="mobile-model-status"><span class="status-pill unknown">checking</span></span>
+            <svg class="mobile-model-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M4 5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </div>
 
         <section class="dashboard-grid">
             <div class="panel">
@@ -1528,79 +1769,6 @@ _DASHBOARD_HTML = """\
         </section>
 
         <section class="panel">
-            <div class="panel-title">Models and Capabilities Matrix</div>
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Backend</th><th>Model</th>
-                            <th>Device</th><th>Capabilities</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><code>llama-router</code></td>
-                            <td id="matrix-llm-model">Checking model registry...</td>
-                            <td><span class="device-badge gpu">GPU</span></td>
-                            <td>
-                                <span class="cap-tag">Chat completions</span>
-                                <span class="cap-tag">Model load/unload</span>
-                                <span class="cap-tag">Reasoning models</span>
-                                <div id="matrix-llm-live" class="matrix-live warn">Waiting for /models telemetry...</div>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>llama-embed</code></td>
-                            <td>snowflake-arctic-embed2</td>
-                            <td><span class="device-badge cpu">CPU</span></td>
-                            <td>
-                                <span class="cap-tag">Text embeddings</span>
-                                <span class="cap-tag">1024 dims</span>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>chatterbox-tts</code></td>
-                            <td>Chatterbox Turbo (350M)</td>
-                            <td><span class="device-badge cpu">CPU</span></td>
-                            <td>
-                                <span class="cap-tag">Voice cloning</span>
-                                <span class="cap-tag">23 languages</span>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>whisper-stt</code></td>
-                            <td>Whisper large-v3-turbo (int8)</td>
-                            <td><span class="device-badge cpu">CPU</span></td>
-                            <td>
-                                <span class="cap-tag">Transcription</span>
-                                <span class="cap-tag">Language detection</span>
-                                <span class="cap-tag">Streaming</span>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>pyannote-speaker</code></td>
-                            <td>pyannote 3.1</td>
-                            <td><span class="device-badge cpu">CPU</span></td>
-                            <td>
-                                <span class="cap-tag">Diarization</span>
-                                <span class="cap-tag">Speaker verification</span>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>deepfilter-audio</code></td>
-                            <td>DeepFilterNet3 + ffmpeg</td>
-                            <td><span class="device-badge cpu">CPU</span></td>
-                            <td>
-                                <span class="cap-tag">Noise reduction</span>
-                                <span class="cap-tag">Format conversion</span>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <section class="panel">
             <div class="panel-title">Operator Links</div>
             <div class="quick-links inline">
                 <a class="focusable" href="/docs">Swagger UI</a>
@@ -1610,6 +1778,30 @@ _DASHBOARD_HTML = """\
             </div>
         </section>
     </main>
+
+    <div id="bs-backdrop" class="bottom-sheet-backdrop" aria-hidden="true"></div>
+    <div id="bs-health" class="bottom-sheet" aria-hidden="true" role="dialog" aria-label="Backend health details">
+        <div class="bs-handle" data-bs-handle></div>
+        <div class="bs-content">
+            <div class="bs-title">Backend Detail</div>
+            <div id="bs-health-content"></div>
+        </div>
+    </div>
+    <div id="bs-models" class="bottom-sheet" aria-hidden="true" role="dialog" aria-label="Model controls">
+        <div class="bs-handle" data-bs-handle></div>
+        <div class="bs-content">
+            <div class="bs-title">LLM Model Control</div>
+            <div id="bs-models-content"></div>
+        </div>
+    </div>
+    <div id="bs-overflow" class="bottom-sheet" aria-hidden="true" role="dialog" aria-label="Operator tools">
+        <div class="bs-handle" data-bs-handle></div>
+        <div class="bs-content">
+            <div class="bs-title">Operator Tools</div>
+            <div id="bs-overflow-content"></div>
+        </div>
+    </div>
+
     <div id="model-modal" class="model-modal" aria-hidden="true">
         <section class="model-modal-panel" role="dialog" aria-modal="true" aria-labelledby="model-modal-title">
             <div class="model-modal-header">
@@ -1617,6 +1809,7 @@ _DASHBOARD_HTML = """\
                 <button id="model-modal-close" class="btn unload focusable" type="button">Close</button>
             </div>
             <div id="model-modal-subtitle" class="endpoint-selected-backend">Select a model in the registry</div>
+            <div id="model-modal-live" class="model-modal-live" aria-live="polite">Live registry: waiting for refresh...</div>
             <div id="model-modal-content"></div>
         </section>
     </div>
@@ -1656,6 +1849,122 @@ _DASHBOARD_HTML = """\
         let modelRegistryRefreshedAt = 0;
         let activeModelModalId = '';
         let selectedBackend = '';
+        const TERMINAL_FEED_MODE = "__TERMINAL_FEED_MODE__";
+        const TERMINAL_INSTANCE_ID = "__INSTANCE_ID__";
+        const TERMINAL_MAX_LINES = 300;
+        const TERMINAL_RECONNECT_MS = 2500;
+        let terminalEventSource = null;
+        let terminalReconnectTimer = null;
+        let terminalExpanded = false;
+        const terminalLevelFilter = new Set(['INFO', 'WARNING', 'ERROR', 'CRITICAL']);
+
+        try {
+            terminalExpanded = localStorage.getItem('synapse_terminal_expanded') === '1';
+        } catch (e) {}
+
+        /* --- Bottom Sheet Controller --- */
+        let activeBottomSheet = null;
+        let bsDragStartY = 0;
+        let bsDragCurrentY = 0;
+        let bsDragging = false;
+        const isMobile = () => window.matchMedia('(max-width: 700px)').matches;
+
+        function openBottomSheet(id) {
+            closeAllBottomSheets();
+            const sheet = document.getElementById(id);
+            const backdrop = document.getElementById('bs-backdrop');
+            if (!sheet || !backdrop) return;
+            activeBottomSheet = id;
+            backdrop.classList.add('active');
+            backdrop.setAttribute('aria-hidden', 'false');
+            sheet.classList.add('open');
+            sheet.setAttribute('aria-hidden', 'false');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeAllBottomSheets() {
+            const bsModels = document.getElementById('bs-models-content');
+            if (bsModels && bsModels.dataset.sourcePanel) {
+                const target = document.querySelector('.dashboard-grid > .panel:last-child');
+                if (target) {
+                    while (bsModels.firstChild) target.appendChild(bsModels.firstChild);
+                }
+                delete bsModels.dataset.sourcePanel;
+            }
+            const backdrop = document.getElementById('bs-backdrop');
+            if (backdrop) {
+                backdrop.classList.remove('active');
+                backdrop.setAttribute('aria-hidden', 'true');
+            }
+            document.querySelectorAll('.bottom-sheet.open').forEach(s => {
+                s.classList.remove('open');
+                s.setAttribute('aria-hidden', 'true');
+            });
+            const modal = document.getElementById('model-modal');
+            if (!modal || !modal.classList.contains('open')) {
+                document.body.style.overflow = '';
+            }
+            activeBottomSheet = null;
+        }
+
+        /* --- Mobile Health Chips --- */
+        function renderMobileHealthChips() {
+            if (!isMobile()) return;
+            const container = document.getElementById('mobile-health-chips');
+            if (!container) return;
+            const cards = document.querySelectorAll('.backend-card[data-backend]');
+            container.innerHTML = '';
+            cards.forEach(card => {
+                const name = card.getAttribute('data-backend');
+                const dotEl = card.querySelector('.status-dot');
+                const statusCls = dotEl ? dotEl.className.replace('status-dot', '').trim() : 'checking';
+                const chip = document.createElement('button');
+                chip.className = 'mobile-health-chip';
+                chip.setAttribute('data-chip-backend', name);
+                chip.setAttribute('type', 'button');
+                chip.setAttribute('aria-label', name + ' - ' + statusCls);
+                chip.innerHTML = '<span class="chip-dot ' + statusCls + '"></span>' + escapeHtml(name);
+                container.appendChild(chip);
+            });
+        }
+
+        /* --- Mobile Model Bar --- */
+        function updateMobileModelBar() {
+            if (!isMobile()) return;
+            const nameEl = document.getElementById('mobile-model-name');
+            const statusEl = document.getElementById('mobile-model-status');
+            if (!nameEl || !statusEl) return;
+            let activeModel = null;
+            for (const [, m] of modelRegistry) {
+                const sv = m.status && m.status.value;
+                if (sv === 'loaded' || sv === 'loading') { activeModel = m; break; }
+            }
+            if (activeModel) {
+                nameEl.textContent = activeModel.id || 'Unknown';
+                const sv = activeModel.status ? activeModel.status.value : 'unknown';
+                const fl = Boolean(activeModel.status && activeModel.status.failed);
+                statusEl.innerHTML = '<span class="status-pill ' + statusClass(sv, fl) + '">' + escapeHtml(fl ? 'failed' : sv) + '</span>';
+            } else {
+                nameEl.textContent = modelState.total > 0 ? modelState.total + ' models registered' : 'No models';
+                statusEl.innerHTML = '<span class="status-pill unloaded">idle</span>';
+            }
+        }
+
+        /* --- Mobile Filter Dropdown --- */
+        function initMobileFilter() {
+            const btn = document.getElementById('mobile-filter-btn');
+            const dropdown = document.getElementById('mobile-filter-dropdown');
+            if (!btn || !dropdown) return;
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isOpen = dropdown.classList.toggle('open');
+                btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            });
+            document.addEventListener('click', () => {
+                dropdown.classList.remove('open');
+                btn.setAttribute('aria-expanded', 'false');
+            });
+        }
 
         const BACKEND_ENDPOINTS = {
             'llama-embed': {
@@ -1797,11 +2106,148 @@ _DASHBOARD_HTML = """\
             }, 10);
         }
 
-        function setTerminalValue(id, value, tone = '') {
-            const el = document.getElementById(id);
+
+        function setTerminalConnection(state, detail = '') {
+            const el = document.getElementById('terminal-conn');
             if (!el) return;
-            el.className = 'terminal-value' + (tone ? ` ${tone}` : '');
-            el.textContent = value;
+            el.className = `terminal-conn ${state}`;
+            const suffix = detail ? ` (${detail})` : '';
+            el.textContent = `${state}${suffix}`;
+        }
+
+        function appendTerminalLine(entry, opts = {}) {
+            const host = document.getElementById('terminal-feed');
+            if (!host) return;
+            const shouldStick = host.scrollTop + host.clientHeight >= host.scrollHeight - 24;
+            const line = document.createElement('div');
+            const levelValue = String(entry.level || 'INFO').toUpperCase();
+            line.className = 'term-line' + (opts.system ? ' system' : '');
+            line.dataset.level = levelValue;
+
+            if (!opts.system && !terminalLevelFilter.has(levelValue)) {
+                line.style.display = 'none';
+            }
+
+            const level = document.createElement('span');
+            level.className = 'term-level';
+            const levelTone = levelValue.toLowerCase();
+            if (levelTone === 'warning' || levelTone === 'error' || levelTone === 'critical') {
+                level.classList.add(levelTone);
+            }
+            level.textContent = levelValue;
+
+            const source = document.createElement('span');
+            source.className = 'term-src';
+            source.textContent = String(entry.source || 'gateway');
+
+            const msg = document.createElement('span');
+            msg.className = 'term-msg';
+            msg.textContent = String(entry.message || '');
+
+            line.appendChild(level);
+            line.appendChild(source);
+            line.appendChild(msg);
+            host.appendChild(line);
+
+            while (host.children.length > TERMINAL_MAX_LINES) {
+                host.removeChild(host.firstElementChild);
+            }
+            if (shouldStick) {
+                host.scrollTop = host.scrollHeight;
+            }
+        }
+
+        function toggleTerminal() {
+            terminalExpanded = !terminalExpanded;
+            const body = document.getElementById('terminal-feed');
+            const btn = document.getElementById('terminal-toggle');
+            if (body) body.classList.toggle('expanded', terminalExpanded);
+            if (btn) btn.textContent = terminalExpanded ? 'Collapse' : 'Expand';
+            try { localStorage.setItem('synapse_terminal_expanded', terminalExpanded ? '1' : '0'); } catch (e) {}
+        }
+
+        function toggleTerminalLevel(level) {
+            if (terminalLevelFilter.has(level)) {
+                terminalLevelFilter.delete(level);
+            } else {
+                terminalLevelFilter.add(level);
+            }
+            document.querySelectorAll('.terminal-filter-btn[data-level]').forEach(btn => {
+                btn.classList.toggle('active', terminalLevelFilter.has(btn.dataset.level));
+            });
+            const host = document.getElementById('terminal-feed');
+            if (!host) return;
+            host.querySelectorAll('.term-line[data-level]').forEach(line => {
+                line.style.display = terminalLevelFilter.has(line.dataset.level) ? '' : 'none';
+            });
+        }
+
+        function initTerminalControls() {
+            const toggle = document.getElementById('terminal-toggle');
+            if (toggle) toggle.addEventListener('click', toggleTerminal);
+            document.querySelectorAll('.terminal-filter-btn[data-level]').forEach(btn => {
+                btn.addEventListener('click', () => toggleTerminalLevel(btn.dataset.level));
+            });
+            if (terminalExpanded) {
+                const body = document.getElementById('terminal-feed');
+                if (body) body.classList.add('expanded');
+                if (toggle) toggle.textContent = 'Collapse';
+            }
+        }
+
+        function connectTerminalFeed() {
+            if (TERMINAL_FEED_MODE !== 'live') {
+                setTerminalConnection('stale', 'mock mode');
+                appendTerminalLine(
+                    {level: 'INFO', source: 'gateway.bootstrap', message: `terminal feed mode=${TERMINAL_FEED_MODE} instance=${TERMINAL_INSTANCE_ID}`},
+                    {system: true},
+                );
+                return;
+            }
+            if (terminalEventSource) {
+                terminalEventSource.close();
+            }
+            setTerminalConnection('connecting');
+            terminalEventSource = new EventSource('/events/terminal');
+
+            terminalEventSource.addEventListener('log', (event) => {
+                try {
+                    const payload = JSON.parse(event.data || '{}');
+                    appendTerminalLine(payload);
+                } catch (e) {
+                    appendTerminalLine({level: 'WARNING', source: 'gateway.ui', message: 'failed to parse terminal event'}, {system: true});
+                }
+            });
+
+            terminalEventSource.addEventListener('meta', (event) => {
+                try {
+                    const payload = JSON.parse(event.data || '{}');
+                    const instance = payload && payload.instance ? String(payload.instance) : TERMINAL_INSTANCE_ID;
+                    const bus = payload && payload.bus_mode ? String(payload.bus_mode) : 'local';
+                    const detail = `${instance}/${bus}`;
+                    setTerminalConnection('live', detail);
+                } catch (e) {
+                    setTerminalConnection('live', TERMINAL_INSTANCE_ID);
+                }
+            });
+
+            terminalEventSource.onopen = () => {
+                setTerminalConnection('live', TERMINAL_INSTANCE_ID);
+            };
+
+            terminalEventSource.onerror = () => {
+                setTerminalConnection('stale', 'reconnecting');
+                if (terminalEventSource) {
+                    terminalEventSource.close();
+                    terminalEventSource = null;
+                }
+                if (terminalReconnectTimer) {
+                    clearTimeout(terminalReconnectTimer);
+                }
+                terminalReconnectTimer = setTimeout(() => {
+                    connectTerminalFeed();
+                }, TERMINAL_RECONNECT_MS);
+            };
         }
 
         function updateEndpointTotal(total = null) {
@@ -2279,9 +2725,27 @@ _DASHBOARD_HTML = """\
             document.body.style.overflow = isOpen ? 'hidden' : '';
         }
 
+        function updateModelModalLiveInfo(stale = false) {
+            const liveEl = document.getElementById('model-modal-live');
+            if (!liveEl || !activeModelModalId) return;
+            const refreshStamp = modelRegistryRefreshedAt ? new Date(modelRegistryRefreshedAt).toLocaleTimeString() : '-';
+            if (stale) {
+                liveEl.textContent = `Live registry: refresh failed · showing snapshot from ${refreshStamp}`;
+                liveEl.classList.add('stale');
+                return;
+            }
+            liveEl.textContent = `Live registry: updated ${refreshStamp} · auto-refresh 10s`;
+            liveEl.classList.remove('stale');
+        }
+
         function closeModelModal() {
             activeModelModalId = '';
             setModalOpenState(false);
+            const liveEl = document.getElementById('model-modal-live');
+            if (liveEl) {
+                liveEl.textContent = 'Live registry: waiting for refresh...';
+                liveEl.classList.remove('stale');
+            }
         }
 
         function renderModelModal(modelId, shouldAnnounce = false) {
@@ -2358,6 +2822,7 @@ _DASHBOARD_HTML = """\
                 </div>
             `;
             setModalOpenState(true);
+            updateModelModalLiveInfo(false);
             loadModelProfileEditor(modelId);
             if (shouldAnnounce) {
                 announce(`${modelId} metadata opened.`);
@@ -2371,8 +2836,10 @@ _DASHBOARD_HTML = """\
                 modelRegistry.set(String(item.id), item);
             });
             modelRegistryRefreshedAt = Date.now();
+            // Keep modal editor state stable during background polling.
+            // Re-rendering here replaces modal DOM and wipes unsaved profile edits.
             if (activeModelModalId && modelRegistry.has(activeModelModalId)) {
-                renderModelModal(activeModelModalId, false);
+                updateModelModalLiveInfo(false);
             }
         }
 
@@ -2480,60 +2947,6 @@ _DASHBOARD_HTML = """\
             return Array.from(modelRegistry.values());
         }
 
-        function updateCapabilitiesMatrix(models, stale = false, staleMessage = '') {
-            const modelCell = document.getElementById('matrix-llm-model');
-            const liveCell = document.getElementById('matrix-llm-live');
-            if (!modelCell || !liveCell) return;
-
-            if (stale) {
-                modelCell.textContent = 'Telemetry stale';
-                liveCell.className = 'matrix-live warn';
-                liveCell.textContent = staleMessage || 'Model registry update failed';
-                return;
-            }
-
-            const list = Array.isArray(models) ? models : [];
-            const loaded = [];
-            const loading = [];
-            const failed = [];
-            list.forEach((model) => {
-                const status = model && model.status ? model.status : {};
-                const id = model && model.id ? String(model.id) : 'unknown';
-                if (status.failed) {
-                    failed.push(id);
-                    return;
-                }
-                if (status.value === 'loaded') {
-                    loaded.push(id);
-                    return;
-                }
-                if (status.value === 'loading') {
-                    loading.push(id);
-                }
-            });
-
-            if (loaded.length > 0) {
-                modelCell.textContent = loaded.join(', ');
-            } else if (loading.length > 0) {
-                modelCell.textContent = 'Loading model...';
-            } else if (list.length > 0) {
-                modelCell.textContent = 'No model loaded';
-            } else {
-                modelCell.textContent = 'No models registered';
-            }
-
-            const parts = [`Loaded ${loaded.length}/${list.length}`];
-            if (loading.length > 0) parts.push(`Loading ${loading.length}`);
-            if (failed.length > 0) parts.push(`Failed ${failed.length}`);
-            liveCell.textContent = parts.join(' · ');
-            if (failed.length > 0) {
-                liveCell.className = 'matrix-live bad';
-            } else if (loaded.length > 0) {
-                liveCell.className = 'matrix-live good';
-            } else {
-                liveCell.className = 'matrix-live warn';
-            }
-        }
 
         function setModelActionStatus(message, isError = false) {
             const el = document.getElementById('model-action-status');
@@ -2551,7 +2964,7 @@ _DASHBOARD_HTML = """\
 
         function applyHealthStaleState(message) {
             const dot = document.getElementById('overall-dot');
-            if (dot) dot.className = 'hdr-dot stale';
+            if (dot) dot.className = 'status-bar-dot stale';
 
             const cards = document.querySelectorAll('[data-backend]');
             cards.forEach((card) => {
@@ -2568,55 +2981,8 @@ _DASHBOARD_HTML = """\
             if (info) info.textContent = `${message} · showing last known state`;
 
             healthState.stale = true;
-            updateTerminalTelemetry();
         }
 
-        function updateTerminalTelemetry() {
-            const healthTone = healthState.stale
-                ? 'warn'
-                : (healthState.status === 'healthy' ? 'good' : 'bad');
-            const healthLabel = healthState.stale ? 'stale' : healthState.status;
-            setTerminalValue('term-health', healthLabel, healthTone);
-
-            const healthyLabel = `${healthState.healthy}/${healthState.total} healthy`;
-            const backendTone = healthState.stale
-                ? 'warn'
-                : (healthState.healthy === healthState.total && healthState.total > 0 ? 'good' : 'bad');
-            setTerminalValue('term-backends', healthyLabel, backendTone);
-
-            const loadedLabel = `${modelState.loaded}/${modelState.total} loaded`;
-            let modelTone = 'good';
-            if (modelState.stale) {
-                modelTone = 'warn';
-            } else if (modelState.failed > 0) {
-                modelTone = 'bad';
-            } else if (modelState.loading > 0 || modelState.loaded === 0) {
-                modelTone = 'warn';
-            }
-            setTerminalValue('term-models', loadedLabel, modelTone);
-
-            const now = Date.now();
-            const ages = [];
-            if (healthState.lastSuccessMs) ages.push(now - healthState.lastSuccessMs);
-            if (modelState.lastSuccessMs) ages.push(now - modelState.lastSuccessMs);
-            if (ages.length > 0) {
-                const maxAgeSeconds = Math.floor(Math.max(...ages) / 1000);
-                const ageTone = maxAgeSeconds <= 15 ? 'good' : (maxAgeSeconds <= 45 ? 'warn' : 'bad');
-                setTerminalValue('term-age', `${maxAgeSeconds}s`, ageTone);
-            } else {
-                setTerminalValue('term-age', 'unknown', 'warn');
-            }
-
-            if (modelActionInFlight) {
-                setTerminalValue('term-bus', 'mutating model registry', 'warn');
-            } else if (healthState.stale || modelState.stale) {
-                setTerminalValue('term-bus', 'telemetry degraded', 'bad');
-            } else if (healthState.status !== 'healthy' || modelState.failed > 0) {
-                setTerminalValue('term-bus', 'watch anomalies', 'warn');
-            } else {
-                setTerminalValue('term-bus', 'idle', 'good');
-            }
-        }
 
         function renderModelsTable(models) {
             const body = document.getElementById('models-table-body');
@@ -2704,7 +3070,7 @@ _DASHBOARD_HTML = """\
                 const models = Array.isArray(data.data) ? data.data : [];
                 indexModelRegistry(models);
                 renderModelsTable(models);
-                updateCapabilitiesMatrix(models, false);
+                updateMobileModelBar();
                 const now = new Date();
                 if (info) {
                     info.textContent = 'Last checked: ' + now.toLocaleTimeString() + ' · refreshes every 10s';
@@ -2744,7 +3110,7 @@ _DASHBOARD_HTML = """\
                     }
                 });
                 modelsStaleAnnounced = false;
-                updateTerminalTelemetry();
+
             } catch (e) {
                 if (e && e.name === 'AbortError') return;
                 if (requestToken < latestModelsToken) return;
@@ -2758,10 +3124,11 @@ _DASHBOARD_HTML = """\
                 if (body) {
                     body.innerHTML = '<tr><td colspan="3" style="color:#fca5a5">Failed to load /models.</td></tr>';
                 }
-                updateCapabilitiesMatrix([], true, 'Model telemetry unavailable');
+
 
                 modelState.stale = true;
-                updateTerminalTelemetry();
+
+                updateModelModalLiveInfo(true);
                 if (!modelsStaleAnnounced) {
                     announce('Model telemetry is stale.');
                     modelsStaleAnnounced = true;
@@ -2781,7 +3148,6 @@ _DASHBOARD_HTML = """\
             setModelButtonsDisabled(true);
             modelPendingActions.set(modelId, action);
             renderModelsTable(getRegistryModels());
-            updateTerminalTelemetry();
             setModelActionStatus(`${actionUpper} ${modelId}... in progress`);
             try {
                 const resp = await fetch(`/models/${action}`, {
@@ -2826,7 +3192,7 @@ _DASHBOARD_HTML = """\
                 modelPendingActions.delete(modelId);
                 renderModelsTable(getRegistryModels());
                 setModelButtonsDisabled(false);
-                updateTerminalTelemetry();
+
             }
         }
 
@@ -2842,7 +3208,6 @@ _DASHBOARD_HTML = """\
             if (m) parts.push(m + 'm');
             parts.push(s + 's');
             document.getElementById('uptime').textContent = parts.join(' ');
-            updateTerminalTelemetry();
         }
 
         async function refreshHealth() {
@@ -2863,7 +3228,7 @@ _DASHBOARD_HTML = """\
                 latestHealthToken = requestToken;
 
                 const dot = document.getElementById('overall-dot');
-                dot.className = 'hdr-dot ' + (data.status === 'healthy' ? 'healthy' : 'degraded');
+                dot.className = 'status-bar-dot ' + (data.status === 'healthy' ? 'healthy' : 'degraded');
                 const backends = data.backends || {};
                 const backendEntries = Object.entries(backends);
                 let healthyCount = 0;
@@ -2886,6 +3251,8 @@ _DASHBOARD_HTML = """\
                     if (info.error) label += ' \u2014 ' + info.error.substring(0, 60);
                     st.textContent = label;
                     st.dataset.lastKnownStatus = label;
+                    const mc = document.querySelector('[data-chip-backend="' + name + '"] .chip-dot');
+                    if (mc) mc.className = 'chip-dot ' + status;
                 }
                 const now = new Date();
                 document.getElementById('refresh-info').textContent =
@@ -2899,7 +3266,8 @@ _DASHBOARD_HTML = """\
                 if (data.status === 'healthy') {
                     healthStaleAnnounced = false;
                 }
-                updateTerminalTelemetry();
+                renderMobileHealthChips();
+
             } catch (e) {
                 if (e && e.name === 'AbortError') return;
                 if (requestToken < latestHealthToken) return;
@@ -2913,6 +3281,60 @@ _DASHBOARD_HTML = """\
         }
 
         document.addEventListener('click', (event) => {
+            /* --- Mobile: overflow button --- */
+            if (event.target.closest('#mobile-overflow-btn')) {
+                const c = document.getElementById('bs-overflow-content');
+                if (c) {
+                    const links = document.querySelector('.quick-links.inline');
+                    c.innerHTML = links ? links.outerHTML : '';
+                }
+                openBottomSheet('bs-overflow');
+                return;
+            }
+
+            /* --- Mobile: health chip tap --- */
+            const healthChip = event.target.closest('.mobile-health-chip[data-chip-backend]');
+            if (healthChip && isMobile()) {
+                const backendName = healthChip.getAttribute('data-chip-backend');
+                const card = document.querySelector('.backend-card[data-backend="' + backendName + '"]');
+                const bsC = document.getElementById('bs-health-content');
+                if (card && bsC) {
+                    const dot = card.querySelector('.status-dot');
+                    const dotCls = dot ? dot.className.replace('status-dot', '').trim() : 'checking';
+                    const statusText = (card.querySelector('.backend-status') || {}).textContent || '';
+                    const healthUrl = (card.querySelector('.backend-health-url') || {}).textContent || '';
+                    const ep = BACKEND_ENDPOINTS[backendName];
+                    let epHtml = '';
+                    if (ep) {
+                        epHtml = ep.groups.map(g =>
+                            '<div class="endpoint-group"><div class="endpoint-group-title">' + escapeHtml(g.title) + '</div>' +
+                            g.routes.map(r => '<div class="endpoint-row"><span class="ep-method">' + escapeHtml(r.method) + '</span><span class="ep-path">' + escapeHtml(r.path) + '</span></div>').join('') +
+                            '</div>'
+                        ).join('');
+                    }
+                    bsC.innerHTML =
+                        '<div class="backend-card" style="clip-path:none;cursor:default;margin-bottom:0.75rem">' +
+                        '<div class="backend-name"><span class="status-dot ' + dotCls + '"></span>' + escapeHtml(backendName) + '</div>' +
+                        '<div class="backend-status">' + escapeHtml(statusText) + '</div>' +
+                        '<div class="backend-health-url">' + escapeHtml(healthUrl) + '</div></div>' +
+                        epHtml;
+                }
+                openBottomSheet('bs-health');
+                return;
+            }
+
+            /* --- Mobile: model bar tap --- */
+            if (event.target.closest('#mobile-model-bar') && isMobile()) {
+                const bsC = document.getElementById('bs-models-content');
+                const src = document.querySelector('.dashboard-grid > .panel:last-child');
+                if (bsC && src) {
+                    while (src.firstChild) bsC.appendChild(src.firstChild);
+                    bsC.dataset.sourcePanel = '1';
+                }
+                openBottomSheet('bs-models');
+                return;
+            }
+
             const modalCloseBtn = event.target.closest('#model-modal-close');
             if (modalCloseBtn) {
                 closeModelModal();
@@ -3007,6 +3429,7 @@ _DASHBOARD_HTML = """\
 
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') {
+                if (activeBottomSheet) { closeAllBottomSheets(); return; }
                 closeModelModal();
                 return;
             }
@@ -3025,20 +3448,78 @@ _DASHBOARD_HTML = """\
         });
 
         initializeBackendSelector();
-        updateTerminalTelemetry();
+        initTerminalControls();
+        initMobileFilter();
+        connectTerminalFeed();
         setInterval(updateUptime, 1000);
         setInterval(refreshHealth, 30000);
         setInterval(refreshModels, 10000);
         setTimeout(refreshHealth, 100);
         setTimeout(refreshModels, 200);
+
+        /* --- Bottom sheet backdrop + drag-to-dismiss --- */
+        document.getElementById('bs-backdrop')?.addEventListener('click', closeAllBottomSheets);
+        document.querySelectorAll('[data-bs-handle]').forEach(handle => {
+            handle.addEventListener('touchstart', (e) => {
+                bsDragStartY = e.touches[0].clientY;
+                bsDragging = true;
+                const sheet = handle.closest('.bottom-sheet');
+                if (sheet) sheet.style.transition = 'none';
+            }, { passive: true });
+        });
+        document.addEventListener('touchmove', (e) => {
+            if (!bsDragging) return;
+            bsDragCurrentY = e.touches[0].clientY;
+            const dy = Math.max(0, bsDragCurrentY - bsDragStartY);
+            const sheet = document.querySelector('.bottom-sheet.open');
+            if (sheet) sheet.style.transform = 'translateY(' + dy + 'px)';
+        }, { passive: true });
+        document.addEventListener('touchend', () => {
+            if (!bsDragging) return;
+            bsDragging = false;
+            const dy = bsDragCurrentY - bsDragStartY;
+            const sheet = document.querySelector('.bottom-sheet.open');
+            if (sheet) {
+                sheet.style.transition = '';
+                sheet.style.transform = '';
+                if (dy > 80) closeAllBottomSheets();
+            }
+        });
+
+        /* --- Mobile init + resize --- */
+        renderMobileHealthChips();
+        updateMobileModelBar();
+        let mobileResizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(mobileResizeTimer);
+            mobileResizeTimer = setTimeout(() => {
+                renderMobileHealthChips();
+                updateMobileModelBar();
+                if (!isMobile()) closeAllBottomSheets();
+            }, 250);
+        });
     </script>
 </body>
 </html>"""
 
 
-@app.get("/dashboard", include_in_schema=False, response_class=HTMLResponse)
-async def dashboard():
-    """Self-contained HTML status dashboard with live health monitoring."""
+_TERMINAL_LEVEL_RANK = {
+    "DEBUG": 10,
+    "INFO": 20,
+    "WARNING": 30,
+    "ERROR": 40,
+    "CRITICAL": 50,
+}
+
+
+def _event_matches_filters(event: dict, *, min_level: str, source_filter: set[str] | None) -> bool:
+    if source_filter and event.get("source") not in source_filter:
+        return False
+    event_level = str(event.get("level", "INFO")).upper()
+    return _TERMINAL_LEVEL_RANK.get(event_level, 20) >= _TERMINAL_LEVEL_RANK.get(min_level, 20)
+
+
+async def _build_dashboard_html() -> str:
     config = get_backends_config()
     backends = config.get("backends", {})
     health_results = {}
@@ -3058,19 +3539,82 @@ async def dashboard():
         .replace("__UPTIME_SECONDS__", str(int(uptime_secs)))
         .replace("__BACKEND_COUNT__", str(len(backends)))
         .replace("__BACKEND_CARDS__", _build_backend_cards(backends, health_results))
+        .replace("__TERMINAL_FEED_MODE__", settings.terminal_feed_mode.strip().lower())
+        .replace("__INSTANCE_ID__", html.escape(settings.instance_id))
     )
+
+
+async def _serve_dashboard() -> HTMLResponse:
+    return HTMLResponse(content=await _build_dashboard_html())
+
+
+@app.get("/events/terminal", include_in_schema=False)
+async def terminal_feed_events(request: Request):
+    if settings.terminal_feed_mode.strip().lower() != "live":
+        raise HTTPException(status_code=404, detail="Terminal feed is disabled (set SYNAPSE_TERMINAL_FEED_MODE=live)")
+
+    feed = get_terminal_feed()
+    source_filter = parse_source_filter(request.query_params.get("sources"))
+    min_level = validate_level(request.query_params.get("level"), settings.terminal_feed_default_level)
+    try:
+        backlog = int(request.query_params.get("backlog", str(settings.terminal_feed_backlog_lines)))
+    except ValueError:
+        backlog = settings.terminal_feed_backlog_lines
+    backlog = max(1, min(backlog, 500))
+    keepalive_seconds = max(5.0, float(settings.terminal_feed_keepalive_seconds))
+
+    subscriber = feed.subscribe()
+
+    async def event_stream():
+        try:
+            yield as_sse(
+                "meta",
+                {
+                    "instance": settings.instance_id,
+                    "mode": settings.terminal_feed_mode.strip().lower(),
+                    "bus_mode": settings.terminal_feed_bus_mode.strip().lower() or "local",
+                },
+            )
+            for event in feed.backlog(limit=backlog, min_level=min_level, allowed_sources=source_filter):
+                yield as_sse("log", event)
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(subscriber.get(), timeout=keepalive_seconds)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if not _event_matches_filters(event, min_level=min_level, source_filter=source_filter):
+                    continue
+                yield as_sse("log", event)
+        finally:
+            feed.unsubscribe(subscriber)
+
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/dashboard", include_in_schema=False, response_class=HTMLResponse)
+async def dashboard():
+    """Self-contained HTML status dashboard with live health monitoring."""
+    return await _serve_dashboard()
 
 
 @app.get("/", include_in_schema=False, response_class=HTMLResponse)
 async def root_dashboard():
     """Serve dashboard directly on base URL."""
-    return HTMLResponse(content=await dashboard())
+    return await _serve_dashboard()
 
 
 @app.get("/ui", include_in_schema=False, response_class=HTMLResponse)
 async def ui_dashboard():
     """Serve dashboard directly on /ui alias."""
-    return HTMLResponse(content=await dashboard())
+    return await _serve_dashboard()
 
 
 # --- Mount routers ---
