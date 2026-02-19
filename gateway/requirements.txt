@@ -6,3 +6,4 @@ python-multipart
 sse-starlette
 pydantic-settings
 pyyaml
+redis>=5.0.0
