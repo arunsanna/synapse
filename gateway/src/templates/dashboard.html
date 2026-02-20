@@ -1,0 +1,3726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Synapse Gateway</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+        :root {
+            --neu-base: #e0e5ec;
+            --neu-dark: #c8cfd9;
+            --neu-light: #ffffff;
+            --orange: #ff4757;
+            --text-primary: #2c3347;
+            --text-secondary: #5a6478;
+            --text-tertiary: #8a95a8;
+            --led-green: #2ecc71;
+            --led-amber: #f39c12;
+            --led-red: #e74c3c;
+            --led-grey: #95a5a6;
+            --led-blue: #3498db;
+            --shadow-card: -6px -6px 12px #fff, 6px 6px 12px #c8cfd9;
+            --shadow-float: -10px -10px 20px #fff, 10px 10px 20px #c8cfd9;
+            --shadow-pressed: inset -3px -3px 6px #fff, inset 3px 3px 6px #c8cfd9;
+            --shadow-recessed: inset -4px -4px 8px #fff, inset 4px 4px 8px #c8cfd9;
+            --radius-panel: 16px;
+            --radius-btn: 10px;
+            --radius-pill: 8px;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html, body { min-height: 100%; }
+
+        body {
+            background: var(--neu-base);
+            color: var(--text-primary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            line-height: 1.6;
+            letter-spacing: -0.01em;
+            padding: 1.25rem;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.025'/%3E%3C/svg%3E");
+            background-repeat: repeat;
+            background-size: 256px 256px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        a { color: var(--text-secondary); text-decoration: none; }
+        a:hover { color: var(--text-primary); }
+        code, .mono { font-family: 'JetBrains Mono', Consolas, monospace; }
+
+        .page {
+            max-width: none;
+            width: 100%;
+            margin: 0;
+            display: grid;
+            gap: 1rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* --- Neumorphic Panel Base --- */
+        .neu-panel {
+            background: var(--neu-base);
+            border-radius: var(--radius-panel);
+            box-shadow: var(--shadow-card);
+            padding: 1.25rem;
+            position: relative;
+            overflow: hidden;
+            transition: box-shadow 0.2s ease;
+        }
+
+        .neu-panel:hover {
+            box-shadow: -8px -8px 16px #fff, 8px 8px 16px #c0c8d4;
+        }
+
+        /* --- Panel Screws (decorative) --- */
+        .panel-screws {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .screw {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 40% 35%, #f0f2f5, #b8bfc8 60%, #969da6);
+            box-shadow: inset 0 1px 2px rgba(255,255,255,0.7), inset 0 -1px 2px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .screw::before,
+        .screw::after {
+            content: "";
+            position: absolute;
+            background: rgba(0,0,0,0.2);
+            border-radius: 1px;
+        }
+
+        .screw::before {
+            width: 6px;
+            height: 1.5px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .screw::after {
+            width: 1.5px;
+            height: 6px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .screw:nth-child(1) { top: 10px; left: 10px; }
+        .screw:nth-child(2) { top: 10px; right: 10px; }
+        .screw:nth-child(3) { bottom: 10px; left: 10px; }
+        .screw:nth-child(4) { bottom: 10px; right: 10px; }
+
+        /* --- Vent Slots (decorative) --- */
+        .vent-bar {
+            display: flex;
+            gap: 4px;
+            justify-content: center;
+            padding: 6px 0 2px;
+            pointer-events: none;
+        }
+
+        .vent-bar span {
+            width: 28px;
+            height: 3px;
+            border-radius: 2px;
+            background: var(--neu-dark);
+            box-shadow: inset -1px -1px 2px #fff, inset 1px 1px 2px rgba(0,0,0,0.08);
+        }
+
+        /* --- LED Indicators --- */
+        .led {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+            background: var(--led-grey);
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.15), 0 0 0 2px rgba(0,0,0,0.06);
+            position: relative;
+        }
+
+        .led::before {
+            content: "";
+            position: absolute;
+            top: 2px;
+            left: 3px;
+            width: 3px;
+            height: 2px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.5);
+        }
+
+        .led.healthy {
+            background: var(--led-green);
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.12), 0 0 0 2px rgba(0,0,0,0.06), 0 0 6px rgba(46, 204, 113, 0.4);
+        }
+
+        .led.unhealthy,
+        .led.unreachable {
+            background: var(--led-red);
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.12), 0 0 0 2px rgba(0,0,0,0.06), 0 0 6px rgba(231, 76, 60, 0.4);
+        }
+
+        .led.degraded {
+            background: var(--led-amber);
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.12), 0 0 0 2px rgba(0,0,0,0.06), 0 0 6px rgba(243, 156, 18, 0.4);
+        }
+
+        .led.checking,
+        .led.stale {
+            background: var(--led-grey);
+        }
+
+        .led.loading {
+            animation: led-pulse 1s ease-in-out infinite;
+        }
+
+        @keyframes led-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* --- Status Bar (nameplate header) --- */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            padding: 0.7rem 1.2rem;
+            background: var(--neu-base);
+            border-radius: var(--radius-panel);
+            box-shadow: var(--shadow-card);
+            min-height: 48px;
+            flex-wrap: wrap;
+            position: relative;
+        }
+
+        .status-bar-title {
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            font-size: 1.05rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--text-primary);
+            white-space: nowrap;
+        }
+
+        .led.status-led {
+            width: 11px;
+            height: 11px;
+        }
+
+        .status-bar-sep {
+            width: 1px;
+            height: 18px;
+            background: var(--neu-dark);
+            flex-shrink: 0;
+        }
+
+        .status-bar-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: var(--text-tertiary);
+            font-size: 0.72rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            white-space: nowrap;
+        }
+
+        .status-bar-chip code {
+            color: var(--text-primary);
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+
+        /* --- Terminal Section (industrial screen) --- */
+        .terminal-section {
+            background: var(--neu-base);
+            border-radius: var(--radius-panel);
+            box-shadow: var(--shadow-card);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .terminal-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.55rem 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            flex-wrap: wrap;
+        }
+
+        .terminal-toolbar-label {
+            font-weight: 700;
+            margin-right: 0.3rem;
+            white-space: nowrap;
+            color: var(--text-primary);
+        }
+
+        .terminal-filters {
+            display: flex;
+            gap: 0.3rem;
+            align-items: center;
+        }
+
+        .terminal-filter-btn {
+            background: var(--neu-base);
+            border: none;
+            color: var(--text-tertiary);
+            padding: 0.25rem 0.55rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            font-weight: 500;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            border-radius: var(--radius-pill);
+            box-shadow: -2px -2px 4px #fff, 2px 2px 4px #c8cfd9;
+        }
+
+        .terminal-filter-btn.active {
+            color: var(--text-primary);
+            box-shadow: var(--shadow-pressed);
+            background: var(--neu-base);
+        }
+
+        .terminal-filter-btn.active.level-warning {
+            color: #b8860b;
+        }
+
+        .terminal-filter-btn.active.level-error {
+            color: #c0392b;
+        }
+
+        .terminal-filter-btn.active.level-critical {
+            color: #a93226;
+        }
+
+        .terminal-conn {
+            margin-left: auto;
+            font-size: 0.65rem;
+            letter-spacing: 0.06em;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 500;
+        }
+
+        .terminal-conn.live {
+            color: var(--led-green);
+        }
+
+        .terminal-conn.connecting {
+            color: var(--led-amber);
+        }
+
+        .terminal-conn.stale {
+            color: var(--led-red);
+        }
+
+        .terminal-toggle {
+            background: var(--neu-base);
+            border: none;
+            color: var(--text-secondary);
+            padding: 0.25rem 0.6rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            font-weight: 500;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            border-radius: var(--radius-pill);
+            box-shadow: -2px -2px 4px #fff, 2px 2px 4px #c8cfd9;
+            transition: all 0.15s ease;
+            margin-left: 0.3rem;
+        }
+
+        .terminal-toggle:hover {
+            box-shadow: -3px -3px 6px #fff, 3px 3px 6px #c0c8d4;
+        }
+
+        .terminal-toggle:active {
+            box-shadow: var(--shadow-pressed);
+        }
+
+        /* --- Terminal Screen Bezel --- */
+        .terminal-screen-bezel {
+            margin: 0 0.9rem 0.9rem;
+            border-radius: 12px;
+            box-shadow: var(--shadow-recessed);
+            padding: 4px;
+            background: var(--neu-base);
+        }
+
+        .terminal-body {
+            padding: 0.6rem 0.8rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem;
+            color: #d2e8ff;
+            display: flex;
+            flex-direction: column;
+            gap: 0.28rem;
+            overflow-y: auto;
+            height: 120px;
+            transition: height 0.25s ease;
+            background: #1a1f2b;
+            border-radius: 8px;
+        }
+
+        .terminal-body.expanded {
+            height: 50vh;
+        }
+
+        .term-line {
+            display: grid;
+            grid-template-columns: 60px 180px minmax(0, 1fr);
+            gap: 0.45rem;
+            min-height: 20px;
+            align-items: start;
+            border-bottom: 1px solid rgba(42, 50, 65, 0.5);
+            padding-bottom: 0.24rem;
+            word-break: break-word;
+        }
+
+        .term-line.system {
+            color: #8ea3ba;
+        }
+
+        .term-level {
+            color: #8fe6ff;
+        }
+
+        .term-level.warning {
+            color: #ffd27b;
+        }
+
+        .term-level.error,
+        .term-level.critical {
+            color: #ff90a8;
+        }
+
+        .term-src {
+            color: #9cb2cb;
+        }
+
+        .term-msg {
+            color: #d9e4f1;
+        }
+
+        /* --- Dashboard Grid --- */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1rem;
+        }
+
+        /* --- Panels --- */
+        .panel {
+            background: var(--neu-base);
+            border-radius: var(--radius-panel);
+            box-shadow: var(--shadow-card);
+            padding: 1.25rem;
+            position: relative;
+            overflow: hidden;
+            transition: box-shadow 0.2s ease;
+        }
+
+        .panel:hover {
+            box-shadow: -8px -8px 16px #fff, 8px 8px 16px #c0c8d4;
+        }
+
+        .panel-title {
+            font-family: 'Inter', sans-serif;
+            font-size: 0.76rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.78rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.6rem;
+        }
+
+        .panel-title .refresh-info {
+            font-size: 0.67rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-tertiary);
+        }
+
+        /* --- Table --- */
+        .table-wrap {
+            overflow-x: auto;
+            border-radius: 12px;
+            box-shadow: var(--shadow-recessed);
+            background: var(--neu-base);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+        }
+
+        th {
+            text-align: left;
+            padding: 0.65rem 0.75rem;
+            background: rgba(0, 0, 0, 0.03);
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-family: 'Inter', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.7rem;
+            border-bottom: 1px solid var(--neu-dark);
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 0.65rem 0.75rem;
+            border-bottom: 1px solid rgba(200, 207, 217, 0.5);
+            vertical-align: top;
+        }
+
+        tr:hover td { background: rgba(0, 0, 0, 0.015); }
+        td code { color: var(--text-primary); font-size: 0.78rem; font-weight: 500; }
+
+        /* --- Backend Cards --- */
+        .backends-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+            gap: 0.72rem;
+        }
+
+        .backend-card {
+            background: var(--neu-base);
+            border-radius: 12px;
+            box-shadow: -4px -4px 8px #fff, 4px 4px 8px #c8cfd9;
+            padding: 0.85rem;
+            transition: all 0.15s ease;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .backend-card:hover {
+            box-shadow: -6px -6px 12px #fff, 6px 6px 12px #c0c8d4;
+            transform: translateY(-1px);
+        }
+
+        .backend-card.active {
+            box-shadow: var(--shadow-pressed);
+            transform: translateY(1px);
+        }
+
+        .backend-name {
+            font-weight: 700;
+            font-size: 0.83rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .backend-status {
+            font-size: 0.73rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+            min-height: 2.35em;
+        }
+
+        .backend-health-url {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-tertiary);
+            margin-top: 0.25rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        /* --- Model Toolbar --- */
+        .model-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.72rem;
+        }
+
+        .model-load-defaults {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.55rem;
+            flex-wrap: wrap;
+        }
+
+        .load-default-field {
+            display: flex;
+            flex-direction: column;
+            gap: 0.18rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--text-tertiary);
+        }
+
+        .load-default-input {
+            min-height: 34px;
+            border: none;
+            background: var(--neu-base);
+            color: var(--text-primary);
+            padding: 0.28rem 0.5rem;
+            border-radius: var(--radius-pill);
+            box-shadow: var(--shadow-recessed);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            width: 88px;
+        }
+
+        .load-default-input.prompt {
+            width: min(540px, 72vw);
+        }
+
+        .model-action-status {
+            font-size: 0.74rem;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .model-action-status.error { color: var(--led-red); }
+
+        /* --- Buttons (mechanical press) --- */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 42px;
+            border: none;
+            border-radius: var(--radius-btn);
+            padding: 0.42rem 0.85rem;
+            background: var(--neu-base);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-size: 0.7rem;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: -4px -4px 8px #fff, 4px 4px 8px #c8cfd9;
+            transition: all 0.1s ease;
+        }
+
+        .btn:hover:enabled {
+            box-shadow: -5px -5px 10px #fff, 5px 5px 10px #c0c8d4;
+        }
+
+        .btn:active:enabled {
+            box-shadow: var(--shadow-pressed);
+            transform: translateY(1px);
+        }
+
+        .btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .btn.load { color: var(--led-green); }
+        .btn.unload { color: var(--orange); }
+
+        /* --- Status Pills (recessed label tape) --- */
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 32px;
+            min-width: 88px;
+            padding: 0.2rem 0.65rem;
+            font-size: 0.68rem;
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 500;
+            border-radius: var(--radius-pill);
+            box-shadow: var(--shadow-recessed);
+            background: var(--neu-base);
+        }
+
+        .status-pill.loaded { color: #1e8449; }
+        .status-pill.loading { color: #b8860b; }
+        .status-pill.unloading { color: #b8860b; }
+        .status-pill.unloaded { color: var(--text-tertiary); }
+        .status-pill.failed { color: var(--led-red); }
+        .status-pill.unknown { color: var(--led-blue); }
+
+        .model-actions {
+            display: inline-flex;
+            gap: 0.45rem;
+            flex-wrap: nowrap;
+            white-space: nowrap;
+        }
+
+        .model-link {
+            background: var(--neu-base);
+            color: var(--text-primary);
+            border: none;
+            border-radius: var(--radius-pill);
+            padding: 0.35rem 0.6rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            cursor: pointer;
+            box-shadow: -3px -3px 6px #fff, 3px 3px 6px #c8cfd9;
+            transition: all 0.1s ease;
+        }
+
+        .model-link:hover {
+            box-shadow: -4px -4px 8px #fff, 4px 4px 8px #c0c8d4;
+        }
+
+        .model-link:active {
+            box-shadow: var(--shadow-pressed);
+        }
+
+        .device-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 24px;
+            padding: 0.1rem 0.52rem;
+            color: var(--text-secondary);
+            background: var(--neu-base);
+            font-size: 0.67rem;
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            border-radius: 6px;
+            box-shadow: var(--shadow-recessed);
+        }
+
+        .device-badge.gpu {
+            color: #8e44ad;
+        }
+
+        /* --- Endpoint Inspector --- */
+        .endpoint-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 280px;
+            gap: 1rem;
+            align-items: start;
+        }
+
+        .backend-endpoints-hud {
+            margin-top: 0.9rem;
+            padding: 0.9rem;
+        }
+
+        .endpoint-selected-backend {
+            font-size: 0.72rem;
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 0.6rem;
+        }
+
+        .endpoint-shell {
+            position: relative;
+            background: var(--neu-base);
+            border-radius: 12px;
+            box-shadow: var(--shadow-recessed);
+            padding: 0.95rem;
+        }
+
+        .endpoint-group { margin-bottom: 1rem; }
+        .endpoint-group:last-child { margin-bottom: 0; }
+
+        .endpoint-empty {
+            color: var(--text-tertiary);
+            font-size: 0.76rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 0.4rem 0;
+        }
+
+        .endpoint-group-title {
+            font-size: 0.68rem;
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            margin-bottom: 0.33rem;
+            padding-bottom: 0.25rem;
+            border-bottom: 1px solid var(--neu-dark);
+        }
+
+        .endpoint-row {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem;
+            padding: 0.22rem 0;
+            display: flex;
+            gap: 0.7rem;
+        }
+
+        .ep-method {
+            font-weight: 600;
+            min-width: 3.5rem;
+            text-align: right;
+            letter-spacing: 0.06em;
+        }
+
+        .ep-method.get { color: var(--led-green); }
+        .ep-method.post { color: var(--led-blue); }
+        .ep-method.delete { color: var(--led-red); }
+        .ep-path { color: var(--text-primary); }
+
+        /* --- Operator Links --- */
+        .quick-links {
+            display: grid;
+            gap: 0.55rem;
+            align-content: start;
+        }
+
+        .quick-links.inline {
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        }
+
+        .quick-links a {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 0.55rem 0.75rem;
+            background: var(--neu-base);
+            color: var(--text-secondary);
+            font-family: 'Inter', sans-serif;
+            font-size: 0.74rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            border-radius: var(--radius-btn);
+            box-shadow: -4px -4px 8px #fff, 4px 4px 8px #c8cfd9;
+            transition: all 0.1s ease;
+        }
+
+        .quick-links a:hover {
+            color: var(--text-primary);
+            box-shadow: -5px -5px 10px #fff, 5px 5px 10px #c0c8d4;
+        }
+
+        .quick-links a:active {
+            box-shadow: var(--shadow-pressed);
+            transform: translateY(1px);
+        }
+
+        /* --- Focus Ring --- */
+        .focusable:focus-visible,
+        button:focus-visible,
+        a:focus-visible {
+            outline: 2px solid var(--led-blue);
+            outline-offset: 2px;
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            border: 0;
+        }
+
+        /* --- Model Modal --- */
+        .model-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 30;
+            background: rgba(200, 207, 217, 0.6);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .model-modal.open {
+            display: flex;
+        }
+
+        .model-modal-panel {
+            width: min(980px, 100%);
+            max-height: 88vh;
+            overflow: auto;
+            background: var(--neu-base);
+            border-radius: var(--radius-panel);
+            box-shadow: var(--shadow-float);
+            padding: 1.25rem;
+        }
+
+        .model-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.8rem;
+            margin-bottom: 0.7rem;
+        }
+
+        .model-modal-title {
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--text-primary);
+        }
+
+        .model-modal-live {
+            margin-bottom: 0.7rem;
+            font-size: 0.65rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--text-tertiary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .model-modal-live.stale {
+            color: var(--led-red);
+        }
+
+        .model-meta-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.55rem;
+            margin-bottom: 0.8rem;
+        }
+
+        .model-meta-item {
+            background: var(--neu-base);
+            border-radius: 10px;
+            box-shadow: var(--shadow-recessed);
+            padding: 0.52rem 0.62rem;
+        }
+
+        .model-meta-label {
+            font-size: 0.62rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-tertiary);
+            margin-bottom: 0.2rem;
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+        }
+
+        .model-meta-value {
+            font-size: 0.77rem;
+            color: var(--text-primary);
+            word-break: break-word;
+        }
+
+        .model-arg-grid {
+            margin-top: 0.25rem;
+            margin-bottom: 0.85rem;
+            border-radius: 10px;
+            box-shadow: var(--shadow-recessed);
+            overflow: hidden;
+        }
+
+        .model-arg-row {
+            display: grid;
+            grid-template-columns: 220px minmax(0, 1fr);
+            gap: 0.7rem;
+            padding: 0.42rem 0.65rem;
+            border-bottom: 1px solid rgba(200, 207, 217, 0.6);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.74rem;
+        }
+
+        .model-arg-row:last-child {
+            border-bottom: 0;
+        }
+
+        .model-arg-key {
+            color: var(--led-blue);
+            text-transform: lowercase;
+            word-break: break-all;
+        }
+
+        .model-arg-value {
+            color: var(--text-primary);
+            word-break: break-word;
+        }
+
+        .model-arg-help {
+            margin-top: 0.25rem;
+            font-size: 0.66rem;
+            color: var(--text-tertiary);
+            letter-spacing: 0.03em;
+        }
+
+        .model-profile-shell {
+            background: var(--neu-base);
+            border-radius: 12px;
+            box-shadow: var(--shadow-recessed);
+            padding: 0.7rem;
+            margin-bottom: 0.85rem;
+        }
+
+        .model-source-shell {
+            background: var(--neu-base);
+            border-radius: 12px;
+            box-shadow: var(--shadow-recessed);
+            padding: 0.7rem;
+            margin-bottom: 0.85rem;
+        }
+
+        .model-source-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 0.55rem;
+        }
+
+        .model-source-card {
+            background: var(--neu-base);
+            border-radius: 10px;
+            box-shadow: -3px -3px 6px #fff, 3px 3px 6px #c8cfd9;
+            padding: 0.55rem 0.65rem;
+        }
+
+        .model-source-title {
+            font-size: 0.64rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--led-blue);
+            margin-bottom: 0.34rem;
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+        }
+
+        .model-source-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.7rem;
+            padding: 0.12rem 0;
+            border-bottom: 1px solid rgba(200, 207, 217, 0.5);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.68rem;
+        }
+
+        .model-source-row:last-child {
+            border-bottom: 0;
+        }
+
+        .model-source-key {
+            color: var(--text-secondary);
+            text-transform: lowercase;
+            word-break: break-word;
+        }
+
+        .model-source-value {
+            color: var(--text-primary);
+            text-align: right;
+            word-break: break-word;
+        }
+
+        .model-source-meta {
+            margin-top: 0.35rem;
+            font-size: 0.62rem;
+            letter-spacing: 0.04em;
+            color: var(--text-tertiary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .model-source-link {
+            color: var(--led-blue);
+            text-decoration: none;
+            border-bottom: 1px dashed rgba(52, 152, 219, 0.4);
+        }
+
+        .model-source-link:hover {
+            color: #2980b9;
+            border-bottom-color: rgba(41, 128, 185, 0.7);
+        }
+
+        .model-profile-grid {
+            display: grid;
+            gap: 0.7rem;
+        }
+
+        .model-profile-row {
+            background: var(--neu-base);
+            border-radius: 10px;
+            box-shadow: -3px -3px 6px #fff, 3px 3px 6px #c8cfd9;
+            padding: 0.55rem 0.65rem;
+        }
+
+        .model-profile-topline {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.6rem;
+            margin-bottom: 0.34rem;
+        }
+
+        .model-profile-name {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+        }
+
+        .model-profile-scope {
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-tertiary);
+            padding: 0.1rem 0.35rem;
+            border-radius: 6px;
+            box-shadow: var(--shadow-recessed);
+        }
+
+        .model-profile-input,
+        .model-profile-select,
+        .model-profile-textarea {
+            width: 100%;
+            border: none;
+            background: var(--neu-base);
+            color: var(--text-primary);
+            padding: 0.38rem 0.5rem;
+            border-radius: var(--radius-pill);
+            box-shadow: var(--shadow-recessed);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+        }
+
+        .model-profile-textarea {
+            min-height: 82px;
+            resize: vertical;
+        }
+
+        .model-profile-range-wrap {
+            display: grid;
+            gap: 0.36rem;
+        }
+
+        .model-profile-slider {
+            width: 100%;
+            accent-color: var(--orange);
+            cursor: pointer;
+        }
+
+        .model-profile-range-meta {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 0.5rem;
+            align-items: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.62rem;
+            letter-spacing: 0.04em;
+            color: var(--text-tertiary);
+        }
+
+        .model-profile-range-meta span:last-child {
+            text-align: right;
+        }
+
+        .model-profile-range-value {
+            color: var(--led-green);
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .model-profile-help {
+            margin-top: 0.36rem;
+            font-size: 0.66rem;
+            color: var(--text-tertiary);
+            letter-spacing: 0.03em;
+        }
+
+        .model-profile-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            margin-top: 0.75rem;
+        }
+
+        .model-profile-status {
+            font-size: 0.7rem;
+            color: var(--led-green);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .model-profile-status.error {
+            color: var(--led-red);
+        }
+
+        .model-profile-notes {
+            margin-top: 0.7rem;
+            border-top: 1px solid var(--neu-dark);
+            padding-top: 0.55rem;
+            display: grid;
+            gap: 0.35rem;
+        }
+
+        .model-profile-note {
+            font-size: 0.66rem;
+            color: var(--text-tertiary);
+            letter-spacing: 0.03em;
+        }
+
+        .model-json-wrap {
+            border-radius: 10px;
+            box-shadow: var(--shadow-recessed);
+            background: var(--neu-base);
+            overflow: auto;
+        }
+
+        .model-json {
+            margin: 0;
+            padding: 0.75rem;
+            color: var(--text-primary);
+            font-size: 0.72rem;
+            line-height: 1.45;
+            font-family: 'JetBrains Mono', monospace;
+            white-space: pre;
+        }
+
+        /* --- Responsive: Tablet --- */
+        @media (max-width: 1120px) {
+            .dashboard-grid { grid-template-columns: 1fr; }
+            .endpoint-grid { grid-template-columns: 1fr; }
+            .quick-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .quick-links.inline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
+        /* --- Dark Theme --- */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --neu-base: #1e2330;
+                --neu-dark: #171b26;
+                --neu-light: #2a3040;
+                --orange: #ff6b7a;
+                --text-primary: #e2e8f0;
+                --text-secondary: #94a3b8;
+                --text-tertiary: #64748b;
+                --shadow-card: -6px -6px 12px rgba(42, 48, 64, 0.5), 6px 6px 12px rgba(10, 12, 18, 0.6);
+                --shadow-float: -10px -10px 20px rgba(42, 48, 64, 0.5), 10px 10px 20px rgba(10, 12, 18, 0.6);
+                --shadow-pressed: inset -3px -3px 6px rgba(42, 48, 64, 0.4), inset 3px 3px 6px rgba(10, 12, 18, 0.5);
+                --shadow-recessed: inset -4px -4px 8px rgba(42, 48, 64, 0.4), inset 4px 4px 8px rgba(10, 12, 18, 0.5);
+            }
+
+            /* Noise texture lighter for dark mode */
+            body::before {
+                opacity: 0.03;
+            }
+
+            /* Links */
+            a:hover { color: var(--text-primary); }
+
+            /* Panel hover shadows must use dark variants */
+            .neu-panel:hover,
+            .panel:hover {
+                box-shadow: -8px -8px 16px rgba(42, 48, 64, 0.5), 8px 8px 16px rgba(8, 10, 16, 0.65);
+            }
+
+            /* Screw must darken */
+            .screw {
+                background: radial-gradient(circle at 40% 35%, #3a4255, #2a3040 60%, #1e2330);
+                box-shadow: inset 0 1px 2px rgba(255,255,255,0.08), inset 0 -1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.2);
+            }
+            .screw::before, .screw::after {
+                background: rgba(255,255,255,0.12);
+            }
+
+            /* Vent slots */
+            .vent-bar span {
+                background: var(--neu-dark);
+                box-shadow: inset -1px -1px 2px rgba(255,255,255,0.04), inset 1px 1px 2px rgba(0,0,0,0.2);
+            }
+
+            /* LED bezel ring needs darker shadow */
+            .led {
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.3), 0 0 0 2px rgba(0,0,0,0.15);
+            }
+            .led.healthy {
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.25), 0 0 0 2px rgba(0,0,0,0.15), 0 0 8px rgba(46, 204, 113, 0.5);
+            }
+            .led.unhealthy, .led.unreachable {
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.25), 0 0 0 2px rgba(0,0,0,0.15), 0 0 8px rgba(231, 76, 60, 0.5);
+            }
+            .led.degraded {
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.25), 0 0 0 2px rgba(0,0,0,0.15), 0 0 8px rgba(243, 156, 18, 0.5);
+            }
+
+            /* Filter buttons — dark neumorphic */
+            .terminal-filter-btn {
+                box-shadow: -2px -2px 4px rgba(42, 48, 64, 0.4), 2px 2px 4px rgba(10, 12, 18, 0.5);
+            }
+            .terminal-filter-btn.active.level-warning { color: #ffd27b; }
+            .terminal-filter-btn.active.level-error { color: #ff90a8; }
+            .terminal-filter-btn.active.level-critical { color: #ff7b8a; }
+
+            /* Terminal toggle */
+            .terminal-toggle {
+                box-shadow: -2px -2px 4px rgba(42, 48, 64, 0.4), 2px 2px 4px rgba(10, 12, 18, 0.5);
+            }
+            .terminal-toggle:hover {
+                box-shadow: -3px -3px 6px rgba(42, 48, 64, 0.5), 3px 3px 6px rgba(8, 10, 16, 0.6);
+            }
+
+            /* Terminal screen bezel — darker inset */
+            .terminal-body {
+                background: #0d1117;
+            }
+
+            /* Table */
+            th {
+                background: rgba(255, 255, 255, 0.03);
+                border-bottom-color: var(--neu-dark);
+            }
+            td {
+                border-bottom-color: rgba(42, 48, 64, 0.5);
+            }
+            tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+            /* Backend cards — dark neumorphic */
+            .backend-card {
+                box-shadow: -4px -4px 8px rgba(42, 48, 64, 0.4), 4px 4px 8px rgba(10, 12, 18, 0.5);
+            }
+            .backend-card:hover {
+                box-shadow: -6px -6px 12px rgba(42, 48, 64, 0.5), 6px 6px 12px rgba(8, 10, 16, 0.6);
+            }
+
+            /* Buttons */
+            .btn {
+                box-shadow: -3px -3px 6px rgba(42, 48, 64, 0.4), 3px 3px 6px rgba(10, 12, 18, 0.5);
+            }
+            .btn:hover:enabled {
+                box-shadow: -4px -4px 8px rgba(42, 48, 64, 0.5), 4px 4px 8px rgba(8, 10, 16, 0.6);
+            }
+
+            /* Status pills */
+            .status-pill {
+                box-shadow: inset -2px -2px 4px rgba(42, 48, 64, 0.3), inset 2px 2px 4px rgba(10, 12, 18, 0.4);
+            }
+            .status-pill.loaded { background: rgba(46, 204, 113, 0.15); color: #6ee7a0; }
+            .status-pill.unloaded { background: rgba(148, 163, 184, 0.12); color: #94a3b8; }
+            .status-pill.loading { background: rgba(52, 152, 219, 0.15); color: #7ec8f0; }
+            .status-pill.error, .status-pill.failed { background: rgba(231, 76, 60, 0.15); color: #ff90a8; }
+
+            /* Quick links */
+            .quick-links a {
+                box-shadow: -3px -3px 6px rgba(42, 48, 64, 0.4), 3px 3px 6px rgba(10, 12, 18, 0.5);
+            }
+            .quick-links a:hover {
+                box-shadow: -4px -4px 8px rgba(42, 48, 64, 0.5), 4px 4px 8px rgba(8, 10, 16, 0.6);
+            }
+
+            /* Endpoint groups */
+            .endpoint-group-name {
+                border-bottom-color: rgba(42, 48, 64, 0.5);
+            }
+            .endpoint-method.post { color: #6ee7a0; }
+            .endpoint-method.get { color: #7ec8f0; }
+            .endpoint-method.put { color: #ffd27b; }
+            .endpoint-method.delete { color: #ff90a8; }
+
+            /* Model modal */
+            .model-modal-overlay {
+                background: rgba(10, 12, 18, 0.7);
+            }
+            .model-modal-panel {
+                background: var(--neu-base);
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+            }
+            .model-modal-close:hover {
+                box-shadow: -3px -3px 6px rgba(42, 48, 64, 0.4), 3px 3px 6px rgba(10, 12, 18, 0.5);
+            }
+
+            /* Model meta grid */
+            .model-meta-value { color: var(--text-primary); }
+
+            /* Source of truth panel */
+            .sot-panel {
+                background: var(--neu-dark);
+            }
+
+            /* Model profile slider track */
+            .slider-input::-webkit-slider-runnable-track {
+                background: var(--neu-dark);
+            }
+            .slider-input::-moz-range-track {
+                background: var(--neu-dark);
+            }
+
+            /* Number inputs */
+            .number-input, .text-input {
+                background: var(--neu-dark);
+                color: var(--text-primary);
+                box-shadow: inset -2px -2px 4px rgba(42, 48, 64, 0.3), inset 2px 2px 4px rgba(10, 12, 18, 0.4);
+            }
+
+            /* Raw JSON block */
+            .raw-json {
+                background: #0d1117;
+            }
+
+            /* Model arg tooltip */
+            .model-arg-hint {
+                background: #0d1117;
+                color: var(--text-secondary);
+            }
+
+            /* Toast */
+            .toast {
+                background: var(--neu-base);
+                box-shadow: var(--shadow-float);
+            }
+
+            /* Mobile dark overrides */
+            .mobile-health-chip {
+                box-shadow: -3px -3px 6px rgba(42, 48, 64, 0.4), 3px 3px 6px rgba(10, 12, 18, 0.5);
+            }
+            .mobile-health-chip:active {
+                box-shadow: var(--shadow-pressed);
+            }
+            .chip-led.healthy {
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.25), 0 0 0 2px rgba(0,0,0,0.15), 0 0 6px rgba(46, 204, 113, 0.5);
+            }
+            .chip-led.unhealthy, .chip-led.unreachable {
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.25), 0 0 0 2px rgba(0,0,0,0.15), 0 0 6px rgba(231, 76, 60, 0.5);
+            }
+            .chip-led.degraded {
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.25), 0 0 0 2px rgba(0,0,0,0.15), 0 0 6px rgba(243, 156, 18, 0.5);
+            }
+            .mobile-overflow-btn {
+                box-shadow: -3px -3px 6px rgba(42, 48, 64, 0.4), 3px 3px 6px rgba(10, 12, 18, 0.5);
+            }
+            .mobile-filter-btn {
+                box-shadow: -3px -3px 6px rgba(42, 48, 64, 0.4), 3px 3px 6px rgba(10, 12, 18, 0.5);
+            }
+            .mobile-filter-dropdown {
+                box-shadow: var(--shadow-float);
+            }
+            .bottom-sheet {
+                box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.3);
+            }
+            .bottom-sheet-backdrop {
+                background: rgba(10, 12, 18, 0.6);
+            }
+
+            /* Status bar dark + mobile frosted glass */
+            @media (max-width: 700px) {
+                .status-bar {
+                    background: rgba(30, 35, 48, 0.85);
+                }
+                .model-modal-header {
+                    background: var(--neu-base);
+                }
+            }
+        }
+
+        /* --- Bottom Sheet (base, hidden on desktop) --- */
+        .bottom-sheet-backdrop { display: none; }
+        .bottom-sheet { display: none; }
+        .mobile-overflow-btn { display: none; }
+        .mobile-health-chips { display: none; }
+        .mobile-model-bar { display: none; }
+        .mobile-filter-btn { display: none; }
+        .mobile-filter-dropdown { display: none; }
+
+        /* --- Mobile --- */
+        @media (max-width: 700px) {
+            body {
+                padding: 1rem;
+                padding-left: max(1rem, env(safe-area-inset-left));
+                padding-right: max(1rem, env(safe-area-inset-right));
+                padding-bottom: env(safe-area-inset-bottom);
+            }
+            .page { gap: 1rem; }
+            .panel, .neu-panel {
+                padding: 1rem;
+                border-radius: 14px;
+            }
+            .panel-screws, .vent-bar { display: none; }
+            .terminal-section { display: none; }
+
+            .panel:hover,
+            .neu-panel:hover {
+                transform: none;
+                box-shadow: var(--shadow-card);
+            }
+            .backend-card:hover {
+                transform: none;
+                box-shadow: -4px -4px 8px #fff, 4px 4px 8px #c8cfd9;
+            }
+
+            /* --- Status bar → sticky app header --- */
+            .status-bar {
+                position: sticky;
+                top: 0;
+                z-index: 30;
+                gap: 0.6rem;
+                padding: 0.7rem 1rem;
+                border-radius: 0 0 14px 14px;
+                background: rgba(224, 229, 236, 0.85);
+                backdrop-filter: blur(12px) saturate(1.4);
+                -webkit-backdrop-filter: blur(12px) saturate(1.4);
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            }
+            .status-bar-title { font-size: 1rem; }
+            .led.status-led {
+                width: 12px;
+                height: 12px;
+            }
+            .status-bar-sep { display: none; }
+            .status-bar-chip { font-size: 0.8rem; }
+            .status-bar-chip code { font-size: 0.82rem; }
+            .chip-baseurl { display: none; }
+            .chip-backends { display: none; }
+            .mobile-overflow-btn {
+                display: flex;
+                margin-left: auto;
+                background: var(--neu-base);
+                border: none;
+                color: var(--text-secondary);
+                padding: 0;
+                width: 48px;
+                height: 48px;
+                min-width: 48px;
+                min-height: 48px;
+                border-radius: 12px;
+                cursor: pointer;
+                align-items: center;
+                justify-content: center;
+                box-shadow: -3px -3px 6px #fff, 3px 3px 6px #c8cfd9;
+                transition: transform 0.1s ease;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .mobile-overflow-btn:active {
+                transform: scale(0.92);
+                box-shadow: var(--shadow-pressed);
+            }
+
+            /* --- Terminal section --- */
+            .terminal-section {
+                border-radius: 14px;
+            }
+            .terminal-screen-bezel {
+                margin: 0 0.7rem 0.7rem;
+            }
+            .terminal-toolbar {
+                flex-wrap: nowrap;
+                gap: 0.5rem;
+                position: relative;
+                font-size: 0.8rem;
+                padding: 0.65rem 1rem;
+            }
+            .terminal-toolbar-label {
+                font-size: 0.82rem;
+                font-weight: 700;
+            }
+            .terminal-filters { display: none; }
+            .terminal-conn {
+                font-size: 0.78rem;
+                margin-left: auto;
+            }
+            .terminal-toggle {
+                font-size: 0.78rem;
+                min-height: 48px;
+                min-width: 48px;
+                padding: 0.3rem 0.75rem;
+                border-radius: 10px;
+                transition: transform 0.1s ease;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .terminal-toggle:active { transform: scale(0.93); }
+            .mobile-filter-btn {
+                display: flex;
+                background: var(--neu-base);
+                border: none;
+                color: var(--text-secondary);
+                padding: 0;
+                width: 48px;
+                height: 48px;
+                min-width: 48px;
+                min-height: 48px;
+                cursor: pointer;
+                border-radius: 12px;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+                box-shadow: -3px -3px 6px #fff, 3px 3px 6px #c8cfd9;
+                transition: transform 0.1s ease;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .mobile-filter-btn:active {
+                transform: scale(0.92);
+                box-shadow: var(--shadow-pressed);
+            }
+            .mobile-filter-dropdown {
+                position: absolute;
+                top: calc(100% + 6px);
+                right: 1rem;
+                z-index: 15;
+                background: var(--neu-base);
+                border-radius: 14px;
+                padding: 0.5rem;
+                display: none;
+                flex-direction: column;
+                gap: 0.35rem;
+                box-shadow: var(--shadow-float);
+                min-width: 160px;
+            }
+            .mobile-filter-dropdown.open { display: flex; }
+            .mobile-filter-dropdown .terminal-filter-btn {
+                width: 100%;
+                justify-content: flex-start;
+                min-height: 48px;
+                padding: 0.5rem 0.85rem;
+                font-size: 0.82rem;
+                border-radius: 10px;
+                -webkit-tap-highlight-color: transparent;
+            }
+
+            /* --- Terminal body --- */
+            .terminal-body {
+                height: 220px;
+                padding: 0.7rem 1rem;
+                font-size: 0.82rem;
+                gap: 0.35rem;
+            }
+            .terminal-body.expanded { height: calc(100vh - 180px); }
+            .term-line {
+                display: flex !important;
+                flex-wrap: wrap;
+                gap: 0.35rem 0.55rem;
+                padding-bottom: 0.4rem;
+                font-size: 0.82rem;
+            }
+            .term-level { flex-shrink: 0; }
+            .term-src {
+                flex-shrink: 0;
+                max-width: 180px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .term-msg { flex-basis: 100%; word-break: break-word; }
+
+            /* --- Health chips --- */
+            .mobile-health-chips {
+                display: flex;
+                gap: 0.65rem;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+                padding: 0.25rem 0;
+                scroll-snap-type: x mandatory;
+                -webkit-mask-image: linear-gradient(to right, black 0%, black calc(100% - 36px), transparent 100%);
+                mask-image: linear-gradient(to right, black 0%, black calc(100% - 36px), transparent 100%);
+            }
+            .mobile-health-chips::-webkit-scrollbar { display: none; }
+            .mobile-health-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.5rem;
+                padding: 0.55rem 1rem;
+                min-height: 48px;
+                background: var(--neu-base);
+                border-radius: 24px;
+                box-shadow: -3px -3px 6px #fff, 3px 3px 6px #c8cfd9;
+                font-family: 'Inter', sans-serif;
+                font-size: 0.82rem;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                color: var(--text-primary);
+                white-space: nowrap;
+                cursor: pointer;
+                flex-shrink: 0;
+                scroll-snap-align: start;
+                transition: transform 0.1s ease;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .mobile-health-chip:active {
+                transform: scale(0.95);
+                box-shadow: var(--shadow-pressed);
+            }
+            .chip-led {
+                width: 10px; height: 10px;
+                border-radius: 50%;
+                display: inline-block;
+                flex-shrink: 0;
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.12), 0 0 0 2px rgba(0,0,0,0.06);
+            }
+            .chip-led.healthy {
+                background: var(--led-green);
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.12), 0 0 0 2px rgba(0,0,0,0.06), 0 0 6px rgba(46, 204, 113, 0.5);
+            }
+            .chip-led.unhealthy, .chip-led.unreachable {
+                background: var(--led-red);
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.12), 0 0 0 2px rgba(0,0,0,0.06), 0 0 6px rgba(231, 76, 60, 0.5);
+            }
+            .chip-led.degraded {
+                background: var(--led-amber);
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.12), 0 0 0 2px rgba(0,0,0,0.06), 0 0 6px rgba(243, 156, 18, 0.5);
+            }
+            .chip-led.checking, .chip-led.stale { background: var(--led-grey); }
+
+            /* --- Model quick-action bar --- */
+            .mobile-model-bar {
+                display: flex;
+                align-items: center;
+                gap: 0.7rem;
+                padding: 0.75rem 1rem;
+                min-height: 56px;
+                background: var(--neu-base);
+                border-radius: 14px;
+                box-shadow: var(--shadow-card);
+                cursor: pointer;
+                transition: transform 0.1s ease;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .mobile-model-bar:active {
+                transform: scale(0.98);
+                box-shadow: var(--shadow-pressed);
+            }
+            .mobile-model-bar-label {
+                font-family: 'Inter', sans-serif;
+                font-size: 0.8rem;
+                font-weight: 700;
+                color: var(--text-secondary);
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+            }
+            .mobile-model-name {
+                flex: 1;
+                font-size: 0.9rem;
+                font-weight: 600;
+                color: var(--text-primary);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .mobile-model-status .status-pill {
+                font-size: 0.78rem;
+                padding: 0.22rem 0.55rem;
+                min-height: 0;
+            }
+            .mobile-model-chevron {
+                color: var(--text-tertiary);
+                flex-shrink: 0;
+                width: 16px;
+                height: 16px;
+            }
+
+            /* --- Hide desktop panels, show mobile elements --- */
+            .dashboard-grid { display: none; }
+            .page > section.panel:last-of-type { display: none; }
+
+            /* --- Bottom sheet --- */
+            .bottom-sheet-backdrop {
+                display: block;
+                position: fixed;
+                inset: 0;
+                z-index: 40;
+                background: rgba(200, 207, 217, 0.5);
+                backdrop-filter: blur(4px);
+                -webkit-backdrop-filter: blur(4px);
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.3s ease;
+            }
+            .bottom-sheet-backdrop.active { opacity: 1; pointer-events: auto; }
+            .bottom-sheet {
+                display: block;
+                position: fixed;
+                bottom: 0; left: 0; right: 0;
+                z-index: 41;
+                max-height: 88vh;
+                background: var(--neu-base);
+                box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.12);
+                border-radius: 18px 18px 0 0;
+                transform: translateY(100%);
+                transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+                overscroll-behavior: contain;
+                padding-bottom: env(safe-area-inset-bottom, 0px);
+            }
+            .bottom-sheet.open { transform: translateY(0); }
+            .bs-handle {
+                display: flex;
+                justify-content: center;
+                padding: 14px 0 8px;
+                cursor: grab;
+                position: sticky;
+                top: 0; z-index: 1;
+                background: inherit;
+            }
+            .bs-handle::after {
+                content: "";
+                width: 40px; height: 5px;
+                border-radius: 3px;
+                background: var(--neu-dark);
+            }
+            .bs-content { padding: 0 1.25rem 1.5rem; }
+            .bs-title {
+                font-family: 'Inter', sans-serif;
+                font-size: 0.88rem;
+                font-weight: 700;
+                color: var(--text-primary);
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                margin-bottom: 0.85rem;
+                padding-top: 0.15rem;
+            }
+            .bs-content .backend-card {
+                border-radius: 12px;
+                cursor: default;
+            }
+            .bs-content .backends-grid { grid-template-columns: 1fr; }
+            .bs-content .model-toolbar { flex-direction: column; align-items: flex-start; gap: 0.75rem; }
+            .bs-content .model-meta-grid { grid-template-columns: 1fr; }
+            .bs-content .model-arg-row { grid-template-columns: 1fr; }
+            .bs-content .quick-links { grid-template-columns: 1fr; gap: 0.5rem; }
+            .bs-content .quick-links.inline { grid-template-columns: 1fr; }
+            .bs-content .quick-links a {
+                min-height: 48px;
+                display: flex;
+                align-items: center;
+                border-radius: 10px;
+                padding: 0.5rem 0.85rem;
+                font-size: 0.85rem;
+            }
+            .bs-content .table-wrap {
+                overflow-x: auto;
+                border-radius: 10px;
+            }
+            .bs-content table { font-size: 0.82rem; }
+            .bs-content .btn {
+                min-height: 48px;
+                border-radius: 10px;
+                font-size: 0.82rem;
+            }
+
+            /* --- Model modal as bottom sheet on mobile --- */
+            .model-modal { align-items: flex-end; padding: 0; }
+            .model-modal-panel {
+                width: 100%;
+                max-height: 92vh;
+                border-radius: 18px 18px 0 0;
+                border: none;
+                padding-bottom: env(safe-area-inset-bottom, 0px);
+            }
+            .model-modal-header {
+                position: sticky; top: 0;
+                background: var(--neu-base);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                z-index: 1;
+                padding-top: 0.85rem;
+            }
+            .model-modal-title { font-size: 0.92rem; }
+        }
+
+        /* --- Reduced Motion --- */
+        @media (prefers-reduced-motion: reduce) {
+            .led.loading {
+                animation: none !important;
+            }
+
+            .backend-card:hover,
+            .quick-links a:hover,
+            .quick-links a:active,
+            .btn:active:enabled {
+                transform: none;
+            }
+
+            .terminal-body {
+                transition: none;
+            }
+
+            .bottom-sheet {
+                transition: none;
+            }
+
+            .bottom-sheet-backdrop {
+                transition: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <header class="status-bar">
+            <span class="status-bar-title">Synapse Gateway</span>
+            <span id="overall-dot" class="led status-led __OVERALL_STATUS_CLASS__"></span>
+            <span class="status-bar-sep"></span>
+            <span class="status-bar-chip chip-baseurl">Base URL <code>synapse.arunlabs.com</code></span>
+            <span class="status-bar-chip chip-uptime">Uptime <code id="uptime">__UPTIME__</code></span>
+            <span class="status-bar-chip chip-backends">Backends <code>__BACKEND_COUNT__</code></span>
+            <button id="mobile-overflow-btn" class="mobile-overflow-btn" type="button" aria-label="More options">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="3" cy="9" r="1.5" fill="currentColor"/><circle cx="9" cy="9" r="1.5" fill="currentColor"/><circle cx="15" cy="9" r="1.5" fill="currentColor"/></svg>
+            </button>
+        </header>
+
+        <section class="terminal-section">
+            <div class="panel-screws" aria-hidden="true"><span class="screw"></span><span class="screw"></span><span class="screw"></span><span class="screw"></span></div>
+            <div class="terminal-toolbar">
+                <span class="terminal-toolbar-label">Terminal Feed</span>
+                <div class="terminal-filters">
+                    <button class="terminal-filter-btn active" data-level="INFO">Info</button>
+                    <button class="terminal-filter-btn active level-warning" data-level="WARNING">Warn</button>
+                    <button class="terminal-filter-btn active level-error" data-level="ERROR">Error</button>
+                    <button class="terminal-filter-btn active level-critical" data-level="CRITICAL">Crit</button>
+                </div>
+                <button id="mobile-filter-btn" class="mobile-filter-btn" type="button" aria-label="Filter log levels" aria-expanded="false">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 2h14L10 8.5V13l-4 2V8.5L1 2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                </button>
+                <div id="mobile-filter-dropdown" class="mobile-filter-dropdown" role="menu">
+                    <button class="terminal-filter-btn active" data-level="INFO">Info</button>
+                    <button class="terminal-filter-btn active level-warning" data-level="WARNING">Warn</button>
+                    <button class="terminal-filter-btn active level-error" data-level="ERROR">Error</button>
+                    <button class="terminal-filter-btn active level-critical" data-level="CRITICAL">Crit</button>
+                </div>
+                <span id="terminal-conn" class="terminal-conn connecting">connecting</span>
+                <button id="terminal-toggle" class="terminal-toggle">Expand</button>
+            </div>
+            <div class="terminal-screen-bezel">
+                <div id="terminal-feed" class="terminal-body" role="log" aria-live="polite" aria-relevant="additions text">
+                    <div class="term-line system"><span class="term-level">INFO</span><span class="term-src">gateway.bootstrap</span><span class="term-msg">terminal feed initializing...</span></div>
+                </div>
+            </div>
+            <div class="vent-bar" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+        </section>
+
+        <nav id="mobile-health-chips" class="mobile-health-chips" aria-label="Backend health status"></nav>
+
+        <div id="mobile-model-bar" class="mobile-model-bar" role="button" tabindex="0" aria-label="Model status, tap for controls">
+            <span class="mobile-model-bar-label">Model</span>
+            <span id="mobile-model-name" class="mobile-model-name">No model loaded</span>
+            <span id="mobile-model-status" class="mobile-model-status"><span class="status-pill unknown">checking</span></span>
+            <svg class="mobile-model-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M4 5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </div>
+
+        <section class="dashboard-grid">
+            <div class="panel">
+                <div class="panel-screws" aria-hidden="true"><span class="screw"></span><span class="screw"></span><span class="screw"></span><span class="screw"></span></div>
+                <div class="panel-title">
+                    Backend Health
+                    <span class="refresh-info" id="refresh-info" aria-live="polite">Auto-refreshes every 30s</span>
+                </div>
+                <div class="backends-grid" id="backends-grid">__BACKEND_CARDS__</div>
+                <div class="endpoint-shell backend-endpoints-hud">
+                    <div class="panel-title">
+                        Backend API Inspector
+                        <span id="endpoint-total" style="font-weight:400;font-size:0.67rem;color:var(--text-tertiary)">0 total</span>
+                    </div>
+                    <div id="endpoint-selected-backend" class="endpoint-selected-backend">Select a backend node</div>
+                    <div id="backend-endpoint-groups" aria-live="polite"></div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-screws" aria-hidden="true"><span class="screw"></span><span class="screw"></span><span class="screw"></span><span class="screw"></span></div>
+                <div class="panel-title">
+                    LLM Model Control
+                    <span class="refresh-info" id="models-refresh-info" aria-live="polite">Auto-refreshes every 10s</span>
+                </div>
+                <div class="model-toolbar">
+                    <button id="refresh-models-btn" class="btn focusable">Refresh Models</button>
+                    <span id="model-action-status" class="model-action-status" aria-live="polite">No model actions yet.</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Model</th><th>Status</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="models-table-body">
+                            <tr>
+                                <td colspan="3" style="color:var(--text-tertiary)">Loading model registry...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-screws" aria-hidden="true"><span class="screw"></span><span class="screw"></span><span class="screw"></span><span class="screw"></span></div>
+            <div class="panel-title">Operator Links</div>
+            <div class="quick-links inline">
+                <a class="focusable" href="/docs">Swagger UI</a>
+                <a class="focusable" href="/redoc">ReDoc</a>
+                <a class="focusable" href="/openapi.json">OpenAPI Spec</a>
+                <a class="focusable" href="/health">Health JSON</a>
+            </div>
+        </section>
+    </main>
+
+    <div id="bs-backdrop" class="bottom-sheet-backdrop" aria-hidden="true"></div>
+    <div id="bs-health" class="bottom-sheet" aria-hidden="true" role="dialog" aria-label="Backend health details">
+        <div class="bs-handle" data-bs-handle></div>
+        <div class="bs-content">
+            <div class="bs-title">Backend Detail</div>
+            <div id="bs-health-content"></div>
+        </div>
+    </div>
+    <div id="bs-models" class="bottom-sheet" aria-hidden="true" role="dialog" aria-label="Model controls">
+        <div class="bs-handle" data-bs-handle></div>
+        <div class="bs-content">
+            <div class="bs-title">LLM Model Control</div>
+            <div id="bs-models-content"></div>
+        </div>
+    </div>
+    <div id="bs-overflow" class="bottom-sheet" aria-hidden="true" role="dialog" aria-label="Operator tools">
+        <div class="bs-handle" data-bs-handle></div>
+        <div class="bs-content">
+            <div class="bs-title">Operator Tools</div>
+            <div id="bs-overflow-content"></div>
+        </div>
+    </div>
+
+    <div id="model-modal" class="model-modal" aria-hidden="true">
+        <section class="model-modal-panel" role="dialog" aria-modal="true" aria-labelledby="model-modal-title">
+            <div class="model-modal-header">
+                <h2 id="model-modal-title" class="model-modal-title">Model Metadata</h2>
+                <button id="model-modal-close" class="btn unload focusable" type="button">Close</button>
+            </div>
+            <div id="model-modal-subtitle" class="endpoint-selected-backend">Select a model in the registry</div>
+            <div id="model-modal-live" class="model-modal-live" aria-live="polite">Live registry: waiting for refresh...</div>
+            <div id="model-modal-content"></div>
+        </section>
+    </div>
+    <div id="sr-live-region" class="sr-only" aria-live="polite"></div>
+
+    <script>
+        let uptimeSeconds = __UPTIME_SECONDS__;
+        let modelActionInFlight = false;
+        let healthRequestToken = 0;
+        let modelsRequestToken = 0;
+        let latestHealthToken = 0;
+        let latestModelsToken = 0;
+        let healthAbortController = null;
+        let modelsAbortController = null;
+        let healthStaleAnnounced = false;
+        let modelsStaleAnnounced = false;
+
+        const healthState = {
+            status: 'checking',
+            healthy: 0,
+            total: 0,
+            stale: true,
+            lastSuccessMs: 0,
+        };
+
+        const modelState = {
+            loaded: 0,
+            loading: 0,
+            failed: 0,
+            total: 0,
+            stale: true,
+            lastSuccessMs: 0,
+        };
+        const modelRegistry = new Map();
+        const modelProfileSchemaCache = new Map();
+        const modelPendingActions = new Map();
+        let modelRegistryRefreshedAt = 0;
+        let activeModelModalId = '';
+        let selectedBackend = '';
+        const TERMINAL_FEED_MODE = "__TERMINAL_FEED_MODE__";
+        const TERMINAL_INSTANCE_ID = "__INSTANCE_ID__";
+        const TERMINAL_MAX_LINES = 300;
+        const TERMINAL_RECONNECT_MS = 2500;
+        let terminalEventSource = null;
+        let terminalReconnectTimer = null;
+        let terminalExpanded = false;
+        const terminalLevelFilter = new Set(['INFO', 'WARNING', 'ERROR', 'CRITICAL']);
+
+        try {
+            terminalExpanded = localStorage.getItem('synapse_terminal_expanded') === '1';
+        } catch (e) {}
+
+        /* --- Bottom Sheet Controller --- */
+        let activeBottomSheet = null;
+        let bsDragStartY = 0;
+        let bsDragCurrentY = 0;
+        let bsDragging = false;
+        const isMobile = () => window.matchMedia('(max-width: 700px)').matches;
+
+        function openBottomSheet(id) {
+            closeAllBottomSheets();
+            const sheet = document.getElementById(id);
+            const backdrop = document.getElementById('bs-backdrop');
+            if (!sheet || !backdrop) return;
+            activeBottomSheet = id;
+            backdrop.classList.add('active');
+            backdrop.setAttribute('aria-hidden', 'false');
+            sheet.classList.add('open');
+            sheet.setAttribute('aria-hidden', 'false');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeAllBottomSheets() {
+            const bsModels = document.getElementById('bs-models-content');
+            if (bsModels && bsModels.dataset.sourcePanel) {
+                const target = document.querySelector('.dashboard-grid > .panel:last-child');
+                if (target) {
+                    while (bsModels.firstChild) target.appendChild(bsModels.firstChild);
+                }
+                delete bsModels.dataset.sourcePanel;
+            }
+            const backdrop = document.getElementById('bs-backdrop');
+            if (backdrop) {
+                backdrop.classList.remove('active');
+                backdrop.setAttribute('aria-hidden', 'true');
+            }
+            document.querySelectorAll('.bottom-sheet.open').forEach(s => {
+                s.classList.remove('open');
+                s.setAttribute('aria-hidden', 'true');
+            });
+            const modal = document.getElementById('model-modal');
+            if (!modal || !modal.classList.contains('open')) {
+                document.body.style.overflow = '';
+            }
+            activeBottomSheet = null;
+        }
+
+        /* --- Mobile Health Chips --- */
+        function renderMobileHealthChips() {
+            if (!isMobile()) return;
+            const container = document.getElementById('mobile-health-chips');
+            if (!container) return;
+            const cards = document.querySelectorAll('.backend-card[data-backend]');
+            container.innerHTML = '';
+            cards.forEach(card => {
+                const name = card.getAttribute('data-backend');
+                const dotEl = card.querySelector('.led');
+                const statusCls = dotEl ? dotEl.className.replace('led', '').trim() : 'checking';
+                const chip = document.createElement('button');
+                chip.className = 'mobile-health-chip';
+                chip.setAttribute('data-chip-backend', name);
+                chip.setAttribute('type', 'button');
+                chip.setAttribute('aria-label', name + ' - ' + statusCls);
+                chip.innerHTML = '<span class="chip-led ' + statusCls + '"></span>' + escapeHtml(name);
+                container.appendChild(chip);
+            });
+        }
+
+        /* --- Mobile Model Bar --- */
+        function updateMobileModelBar() {
+            if (!isMobile()) return;
+            const nameEl = document.getElementById('mobile-model-name');
+            const statusEl = document.getElementById('mobile-model-status');
+            if (!nameEl || !statusEl) return;
+            let activeModel = null;
+            for (const [, m] of modelRegistry) {
+                const sv = m.status && m.status.value;
+                if (sv === 'loaded' || sv === 'loading') { activeModel = m; break; }
+            }
+            if (activeModel) {
+                nameEl.textContent = activeModel.id || 'Unknown';
+                const sv = activeModel.status ? activeModel.status.value : 'unknown';
+                const fl = Boolean(activeModel.status && activeModel.status.failed);
+                statusEl.innerHTML = '<span class="status-pill ' + statusClass(sv, fl) + '">' + escapeHtml(fl ? 'failed' : sv) + '</span>';
+            } else {
+                nameEl.textContent = modelState.total > 0 ? modelState.total + ' models registered' : 'No models';
+                statusEl.innerHTML = '<span class="status-pill unloaded">idle</span>';
+            }
+        }
+
+        /* --- Mobile Filter Dropdown --- */
+        function initMobileFilter() {
+            const btn = document.getElementById('mobile-filter-btn');
+            const dropdown = document.getElementById('mobile-filter-dropdown');
+            if (!btn || !dropdown) return;
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isOpen = dropdown.classList.toggle('open');
+                btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            });
+            document.addEventListener('click', () => {
+                dropdown.classList.remove('open');
+                btn.setAttribute('aria-expanded', 'false');
+            });
+        }
+
+        const BACKEND_ENDPOINTS = {
+            'llama-embed': {
+                title: 'llama-embed',
+                groups: [
+                    {
+                        title: 'Gateway Route',
+                        routes: [{method: 'POST', path: '/v1/embeddings'}],
+                    },
+                    {
+                        title: 'Ops',
+                        routes: [{method: 'GET', path: '/health'}],
+                    },
+                ],
+            },
+            'llama-router': {
+                title: 'llama-router',
+                groups: [
+                    {
+                        title: 'Gateway Routes',
+                        routes: [
+                            {method: 'POST', path: '/v1/chat/completions'},
+                            {method: 'GET', path: '/models'},
+                            {method: 'POST', path: '/models/load'},
+                            {method: 'POST', path: '/models/unload'},
+                        ],
+                    },
+                    {
+                        title: 'Ops',
+                        routes: [{method: 'GET', path: '/health'}],
+                    },
+                ],
+            },
+            'chatterbox-tts': {
+                title: 'chatterbox-tts',
+                groups: [
+                    {
+                        title: 'Gateway Routes',
+                        routes: [
+                            {method: 'POST', path: '/tts/synthesize'},
+                            {method: 'POST', path: '/tts/stream'},
+                            {method: 'POST', path: '/tts/interpolate'},
+                            {method: 'GET', path: '/tts/languages'},
+                        ],
+                    },
+                    {
+                        title: 'Ops',
+                        routes: [{method: 'GET', path: '/health'}],
+                    },
+                ],
+            },
+            'whisper-stt': {
+                title: 'whisper-stt',
+                groups: [
+                    {
+                        title: 'Gateway Routes',
+                        routes: [
+                            {method: 'POST', path: '/stt/transcribe'},
+                            {method: 'POST', path: '/stt/detect-language'},
+                            {method: 'POST', path: '/stt/stream'},
+                        ],
+                    },
+                    {
+                        title: 'Ops',
+                        routes: [{method: 'GET', path: '/health'}],
+                    },
+                ],
+            },
+            'pyannote-speaker': {
+                title: 'pyannote-speaker',
+                groups: [
+                    {
+                        title: 'Gateway Routes',
+                        routes: [
+                            {method: 'POST', path: '/speakers/diarize'},
+                            {method: 'POST', path: '/speakers/verify'},
+                        ],
+                    },
+                    {
+                        title: 'Ops',
+                        routes: [{method: 'GET', path: '/health'}],
+                    },
+                ],
+            },
+            'deepfilter-audio': {
+                title: 'deepfilter-audio',
+                groups: [
+                    {
+                        title: 'Gateway Routes',
+                        routes: [
+                            {method: 'POST', path: '/audio/denoise'},
+                            {method: 'POST', path: '/audio/convert'},
+                        ],
+                    },
+                    {
+                        title: 'Ops',
+                        routes: [{method: 'GET', path: '/health'}],
+                    },
+                ],
+            },
+        };
+
+        const MODEL_CARD_HINTS = [
+            {
+                pattern: /Nemotron-Nano-3-30B-A3B/i,
+                links: [
+                    {label: 'NVIDIA BF16 Card', url: 'https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16'},
+                    {label: 'GGUF Conversion', url: 'https://huggingface.co/ggml-org/Nemotron-Nano-3-30B-A3B-GGUF'},
+                ],
+            },
+            {
+                pattern: /gpt-oss-120b/i,
+                links: [{label: 'GGUF Card', url: 'https://huggingface.co/unsloth/gpt-oss-120b-GGUF'}],
+            },
+            {
+                pattern: /MiniMax-M2\\.5/i,
+                links: [{label: 'GGUF Card', url: 'https://huggingface.co/unsloth/MiniMax-M2.5-GGUF'}],
+            },
+            {
+                pattern: /Qwen3-8B-Q4_K_M/i,
+                links: [{label: 'GGUF Card', url: 'https://huggingface.co/unsloth/Qwen3-8B-GGUF'}],
+            },
+            {
+                pattern: /Qwen2\\.5-Coder-7B-Instruct-Q4_K_M/i,
+                links: [{label: 'GGUF Card', url: 'https://huggingface.co/unsloth/Qwen2.5-Coder-7B-Instruct-GGUF'}],
+            },
+            {
+                pattern: /glm-4\\.7-flash-claude-4\\.5-opus/i,
+                links: [{label: 'GGUF Card', url: 'https://huggingface.co/TeichAI/GLM-4.7-Flash-Claude-Opus-4.5-High-Reasoning-Distill-GGUF'}],
+            },
+        ];
+
+        function announce(message) {
+            const region = document.getElementById('sr-live-region');
+            if (!region) return;
+            region.textContent = '';
+            setTimeout(() => {
+                region.textContent = message;
+            }, 10);
+        }
+
+
+        function setTerminalConnection(state, detail = '') {
+            const el = document.getElementById('terminal-conn');
+            if (!el) return;
+            el.className = `terminal-conn ${state}`;
+            const suffix = detail ? ` (${detail})` : '';
+            el.textContent = `${state}${suffix}`;
+        }
+
+        function appendTerminalLine(entry, opts = {}) {
+            const host = document.getElementById('terminal-feed');
+            if (!host) return;
+            const shouldStick = host.scrollTop + host.clientHeight >= host.scrollHeight - 24;
+            const line = document.createElement('div');
+            const levelValue = String(entry.level || 'INFO').toUpperCase();
+            line.className = 'term-line' + (opts.system ? ' system' : '');
+            line.dataset.level = levelValue;
+
+            if (!opts.system && !terminalLevelFilter.has(levelValue)) {
+                line.style.display = 'none';
+            }
+
+            const level = document.createElement('span');
+            level.className = 'term-level';
+            const levelTone = levelValue.toLowerCase();
+            if (levelTone === 'warning' || levelTone === 'error' || levelTone === 'critical') {
+                level.classList.add(levelTone);
+            }
+            level.textContent = levelValue;
+
+            const source = document.createElement('span');
+            source.className = 'term-src';
+            source.textContent = String(entry.source || 'gateway');
+
+            const msg = document.createElement('span');
+            msg.className = 'term-msg';
+            msg.textContent = String(entry.message || '');
+
+            line.appendChild(level);
+            line.appendChild(source);
+            line.appendChild(msg);
+            host.appendChild(line);
+
+            while (host.children.length > TERMINAL_MAX_LINES) {
+                host.removeChild(host.firstElementChild);
+            }
+            if (shouldStick) {
+                host.scrollTop = host.scrollHeight;
+            }
+        }
+
+        function toggleTerminal() {
+            terminalExpanded = !terminalExpanded;
+            const body = document.getElementById('terminal-feed');
+            const btn = document.getElementById('terminal-toggle');
+            if (body) body.classList.toggle('expanded', terminalExpanded);
+            if (btn) btn.textContent = terminalExpanded ? 'Collapse' : 'Expand';
+            try { localStorage.setItem('synapse_terminal_expanded', terminalExpanded ? '1' : '0'); } catch (e) {}
+        }
+
+        function toggleTerminalLevel(level) {
+            if (terminalLevelFilter.has(level)) {
+                terminalLevelFilter.delete(level);
+            } else {
+                terminalLevelFilter.add(level);
+            }
+            document.querySelectorAll('.terminal-filter-btn[data-level]').forEach(btn => {
+                btn.classList.toggle('active', terminalLevelFilter.has(btn.dataset.level));
+            });
+            const host = document.getElementById('terminal-feed');
+            if (!host) return;
+            host.querySelectorAll('.term-line[data-level]').forEach(line => {
+                line.style.display = terminalLevelFilter.has(line.dataset.level) ? '' : 'none';
+            });
+        }
+
+        function initTerminalControls() {
+            const toggle = document.getElementById('terminal-toggle');
+            if (toggle) toggle.addEventListener('click', toggleTerminal);
+            document.querySelectorAll('.terminal-filter-btn[data-level]').forEach(btn => {
+                btn.addEventListener('click', () => toggleTerminalLevel(btn.dataset.level));
+            });
+            if (terminalExpanded) {
+                const body = document.getElementById('terminal-feed');
+                if (body) body.classList.add('expanded');
+                if (toggle) toggle.textContent = 'Collapse';
+            }
+        }
+
+        function connectTerminalFeed() {
+            if (TERMINAL_FEED_MODE !== 'live') {
+                setTerminalConnection('stale', 'mock mode');
+                appendTerminalLine(
+                    {level: 'INFO', source: 'gateway.bootstrap', message: `terminal feed mode=${TERMINAL_FEED_MODE} instance=${TERMINAL_INSTANCE_ID}`},
+                    {system: true},
+                );
+                return;
+            }
+            if (terminalEventSource) {
+                terminalEventSource.close();
+            }
+            setTerminalConnection('connecting');
+            terminalEventSource = new EventSource('/events/terminal');
+
+            terminalEventSource.addEventListener('log', (event) => {
+                try {
+                    const payload = JSON.parse(event.data || '{}');
+                    appendTerminalLine(payload);
+                } catch (e) {
+                    appendTerminalLine({level: 'WARNING', source: 'gateway.ui', message: 'failed to parse terminal event'}, {system: true});
+                }
+            });
+
+            terminalEventSource.addEventListener('meta', (event) => {
+                try {
+                    const payload = JSON.parse(event.data || '{}');
+                    const instance = payload && payload.instance ? String(payload.instance) : TERMINAL_INSTANCE_ID;
+                    const bus = payload && payload.bus_mode ? String(payload.bus_mode) : 'local';
+                    const detail = `${instance}/${bus}`;
+                    setTerminalConnection('live', detail);
+                } catch (e) {
+                    setTerminalConnection('live', TERMINAL_INSTANCE_ID);
+                }
+            });
+
+            terminalEventSource.onopen = () => {
+                setTerminalConnection('live', TERMINAL_INSTANCE_ID);
+            };
+
+            terminalEventSource.onerror = () => {
+                setTerminalConnection('stale', 'reconnecting');
+                if (terminalEventSource) {
+                    terminalEventSource.close();
+                    terminalEventSource = null;
+                }
+                if (terminalReconnectTimer) {
+                    clearTimeout(terminalReconnectTimer);
+                }
+                terminalReconnectTimer = setTimeout(() => {
+                    connectTerminalFeed();
+                }, TERMINAL_RECONNECT_MS);
+            };
+        }
+
+        function updateEndpointTotal(total = null) {
+            const el = document.getElementById('endpoint-total');
+            if (!el) return;
+            if (typeof total === 'number') {
+                el.textContent = `${total} total`;
+                return;
+            }
+            const count = document.querySelectorAll('#backend-endpoint-groups .endpoint-row').length;
+            el.textContent = `${count} total`;
+        }
+
+        function formatTimestampFromUnix(seconds) {
+            const n = Number(seconds);
+            if (!Number.isFinite(n) || n <= 0) return '-';
+            const dt = new Date(n * 1000);
+            return `${dt.toLocaleString()} (${Math.floor(n)})`;
+        }
+
+        function parseRuntimeArgs(args) {
+            if (!Array.isArray(args)) return [];
+            const rows = [];
+            for (let i = 0; i < args.length; i++) {
+                const token = args[i];
+                if (typeof token !== 'string') {
+                    rows.push({key: `arg[${i}]`, value: String(token)});
+                    continue;
+                }
+                if (token.startsWith('--')) {
+                    let value = 'true';
+                    const next = args[i + 1];
+                    if (typeof next === 'string' && !next.startsWith('--')) {
+                        value = next;
+                        i += 1;
+                    }
+                    rows.push({key: token, value});
+                    continue;
+                }
+                rows.push({key: `arg[${i}]`, value: token});
+            }
+            return rows;
+        }
+
+        const RUNTIME_ARG_HELP = {
+            '--ctx-size': 'Maximum context window in tokens for a single request.',
+            '--threads': 'CPU threads for token generation.',
+            '--threads-batch': 'CPU threads for prompt/batch processing.',
+            '--batch-size': 'Batch token count used during prompt evaluation.',
+            '--ubatch-size': 'Micro-batch token count for compute scheduling.',
+            '--parallel': 'Number of concurrent slots handled by the model server.',
+            '--sleep-idle-seconds': 'Auto-idle timeout before model sleeps.',
+            '--model': 'Path to the GGUF file loaded by llama.cpp.',
+            '--port': 'Internal llama.cpp child server port.',
+            '--host': 'Internal bind host for llama.cpp child server.',
+            '--metrics': 'Enables llama.cpp metrics endpoint.',
+            '--alias': 'Model alias exposed by router mode.',
+        };
+
+        function runtimeArgHelp(key) {
+            const norm = String(key || '').toLowerCase();
+            return RUNTIME_ARG_HELP[norm] || 'Runtime argument from llama.cpp preset.';
+        }
+
+        function renderRuntimeArgs(args) {
+            const pairs = parseRuntimeArgs(args);
+            if (pairs.length === 0) {
+                return '<div class="endpoint-empty">No runtime args exposed.</div>';
+            }
+            return `<div class="model-arg-grid">${pairs.map((pair) => `
+                <div class="model-arg-row">
+                    <div class="model-arg-key">${escapeHtml(pair.key)}</div>
+                    <div class="model-arg-value">
+                        ${escapeHtml(pair.value)}
+                        ${pair.key.startsWith('--') ? `<div class="model-arg-help">${escapeHtml(runtimeArgHelp(pair.key))}</div>` : ''}
+                    </div>
+                </div>`).join('')}</div>`;
+        }
+
+        function parseRuntimeArgMap(args) {
+            const map = {};
+            const pairs = parseRuntimeArgs(args);
+            pairs.forEach((pair) => {
+                if (typeof pair.key === 'string' && pair.key.startsWith('--')) {
+                    map[pair.key] = String(pair.value ?? '');
+                }
+            });
+            return map;
+        }
+
+        function inferModelCardLinks(modelId) {
+            const id = String(modelId || '');
+            for (const hint of MODEL_CARD_HINTS) {
+                if (hint.pattern.test(id)) {
+                    return hint.links;
+                }
+            }
+            return [{
+                label: 'Hugging Face Search',
+                url: `https://huggingface.co/models?search=${encodeURIComponent(id)}`,
+            }];
+        }
+
+        function renderSourceRows(rows) {
+            if (!Array.isArray(rows) || rows.length === 0) {
+                return '<div class="model-source-meta">No values available.</div>';
+            }
+            return rows.map((row) => `
+                <div class="model-source-row">
+                    <div class="model-source-key">${escapeHtml(row.key || '-')}</div>
+                    <div class="model-source-value">${escapeHtml(row.value || '-')}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderSourceTruthPanel(modelId, schema, profilePayload) {
+            const model = modelRegistry.get(modelId) || {};
+            const status = model.status || {};
+            const runtimeMap = parseRuntimeArgMap(Array.isArray(status.args) ? status.args : []);
+            const profileValues = (profilePayload && typeof profilePayload === 'object' && profilePayload.values && typeof profilePayload.values === 'object')
+                ? profilePayload.values
+                : {};
+            const fields = Array.isArray(schema?.fields) ? schema.fields : [];
+
+            const runtimeRows = [
+                {key: 'status', value: String(status.value || 'unknown')},
+                {key: '--ctx-size', value: String(runtimeMap['--ctx-size'] || '-')},
+                {key: '--batch-size', value: String(runtimeMap['--batch-size'] || '-')},
+                {key: '--ubatch-size', value: String(runtimeMap['--ubatch-size'] || '-')},
+                {key: '--threads', value: String(runtimeMap['--threads'] || '-')},
+                {key: '--threads-batch', value: String(runtimeMap['--threads-batch'] || '-')},
+                {key: '--parallel', value: String(runtimeMap['--parallel'] || '-')},
+            ];
+
+            const profileRows = Object.entries(profileValues).map(([key, value]) => ({
+                key,
+                value: value === null || value === undefined ? '(unset)' : String(value),
+            }));
+
+            const boundRows = fields
+                .filter((field) => field && (field.type === 'number' || field.type === 'integer'))
+                .map((field) => ({
+                    key: field.name || 'param',
+                    value: `${field.min ?? '-'} .. ${field.max ?? '-'} (default ${field.default ?? '-'})`,
+                }));
+
+            const links = inferModelCardLinks(modelId).map((link) => (
+                `<a class="model-source-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label)}</a>`
+            )).join(' · ');
+
+            return `
+                <div class="model-source-grid">
+                    <div class="model-source-card">
+                        <div class="model-source-title">Effective Runtime (Live)</div>
+                        ${renderSourceRows(runtimeRows)}
+                        <div class="model-source-meta">Source: <code>GET /models</code> → <code>status.args</code></div>
+                    </div>
+                    <div class="model-source-card">
+                        <div class="model-source-title">Saved Model Profile</div>
+                        ${renderSourceRows(profileRows)}
+                        <div class="model-source-meta">Source: <code>GET /models/{id}/profile</code></div>
+                    </div>
+                    <div class="model-source-card">
+                        <div class="model-source-title">Schema Min/Max Bounds</div>
+                        ${renderSourceRows(boundRows)}
+                        <div class="model-source-meta">Source: <code>GET /models/{id}/schema</code></div>
+                    </div>
+                    <div class="model-source-card">
+                        <div class="model-source-title">Reference Model Cards</div>
+                        <div class="model-source-meta">${links}</div>
+                        <div class="model-source-meta">Source: Hugging Face model cards (reference only).</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function encodeDomId(value) {
+            return String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
+        }
+
+        function modelProfileInputId(modelId, fieldName) {
+            return `profile_${encodeDomId(modelId)}_${encodeDomId(fieldName)}`;
+        }
+
+        function setModelProfileStatus(message, isError = false) {
+            const el = document.getElementById('model-profile-status');
+            if (!el) return;
+            el.className = 'model-profile-status' + (isError ? ' error' : '');
+            el.textContent = message;
+        }
+
+        async function fetchModelProfileSchema(modelId) {
+            const resp = await fetch(`/models/${encodeURIComponent(modelId)}/schema`, {cache: 'no-store'});
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(extractApiErrorMessage(data, resp.status));
+            }
+            return data;
+        }
+
+        async function fetchModelProfileValues(modelId) {
+            const resp = await fetch(`/models/${encodeURIComponent(modelId)}/profile`, {cache: 'no-store'});
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(extractApiErrorMessage(data, resp.status));
+            }
+            return data;
+        }
+
+        function renderProfileInput(modelId, field, currentValue) {
+            const inputId = modelProfileInputId(modelId, field.name);
+            const type = field.type || 'string';
+            const value = (currentValue === undefined || currentValue === null) ? '' : String(currentValue);
+            if (type === 'enum') {
+                const choices = Array.isArray(field.choices) ? field.choices : [];
+                const options = ['<option value="">(unset)</option>'].concat(
+                    choices.map((choice) => {
+                        const selected = value === String(choice) ? ' selected' : '';
+                        return `<option value="${escapeHtml(choice)}"${selected}>${escapeHtml(choice)}</option>`;
+                    }),
+                ).join('');
+                return `<select id="${escapeHtml(inputId)}" class="model-profile-select">${options}</select>`;
+            }
+            if (type === 'string') {
+                return `<textarea id="${escapeHtml(inputId)}" class="model-profile-textarea" placeholder="(unset)">${escapeHtml(value)}</textarea>`;
+            }
+            const htmlType = 'number';
+            const minAttr = field.min !== undefined ? ` min="${escapeHtml(String(field.min))}"` : '';
+            const maxAttr = field.max !== undefined ? ` max="${escapeHtml(String(field.max))}"` : '';
+            const stepAttr = field.step !== undefined ? ` step="${escapeHtml(String(field.step))}"` : '';
+            const sliderId = `${inputId}__slider`;
+            const valueBadgeId = `${inputId}__value`;
+            const sliderValue = value !== ''
+                ? value
+                : (field.default !== undefined && field.default !== null && field.default !== ''
+                    ? String(field.default)
+                    : (field.min !== undefined ? String(field.min) : '0'));
+            const hasRange = field.min !== undefined && field.max !== undefined;
+            if (!hasRange) {
+                return `<input id="${escapeHtml(inputId)}" class="model-profile-input" type="${htmlType}"${minAttr}${maxAttr}${stepAttr} value="${escapeHtml(value)}" placeholder="(unset)">`;
+            }
+            return `
+                <div class="model-profile-range-wrap">
+                    <input id="${escapeHtml(inputId)}" class="model-profile-input" type="${htmlType}"${minAttr}${maxAttr}${stepAttr} value="${escapeHtml(value)}" placeholder="(unset)">
+                    <input id="${escapeHtml(sliderId)}" class="model-profile-slider" type="range"${minAttr}${maxAttr}${stepAttr} value="${escapeHtml(sliderValue)}">
+                    <div class="model-profile-range-meta">
+                        <span>min ${escapeHtml(String(field.min))}</span>
+                        <span id="${escapeHtml(valueBadgeId)}" class="model-profile-range-value">${escapeHtml(value || '(unset)')}</span>
+                        <span>max ${escapeHtml(String(field.max))}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function bindProfileRangeInputs(modelId, schema) {
+            const fields = Array.isArray(schema?.fields) ? schema.fields : [];
+            fields.forEach((field) => {
+                if (!field || (field.type !== 'number' && field.type !== 'integer')) return;
+                if (field.min === undefined || field.max === undefined) return;
+                const inputId = modelProfileInputId(modelId, field.name);
+                const sliderId = `${inputId}__slider`;
+                const valueBadgeId = `${inputId}__value`;
+                const inputEl = document.getElementById(inputId);
+                const sliderEl = document.getElementById(sliderId);
+                const valueBadgeEl = document.getElementById(valueBadgeId);
+                if (!inputEl || !sliderEl) return;
+
+                const min = Number(field.min);
+                const max = Number(field.max);
+
+                const setValueBadge = (raw) => {
+                    if (!valueBadgeEl) return;
+                    valueBadgeEl.textContent = raw === '' ? '(unset)' : String(raw);
+                };
+
+                const clampValue = (raw) => {
+                    const n = Number(raw);
+                    if (!Number.isFinite(n)) return null;
+                    let clamped = Math.max(min, Math.min(max, n));
+                    if (field.type === 'integer') {
+                        clamped = Math.round(clamped);
+                    }
+                    return clamped;
+                };
+
+                sliderEl.addEventListener('input', () => {
+                    const n = clampValue(sliderEl.value);
+                    if (n === null) return;
+                    inputEl.value = String(n);
+                    setValueBadge(String(n));
+                });
+
+                const syncFromInput = () => {
+                    const raw = (inputEl.value || '').trim();
+                    if (raw === '') {
+                        setValueBadge('');
+                        return;
+                    }
+                    const n = clampValue(raw);
+                    if (n === null) return;
+                    inputEl.value = String(n);
+                    sliderEl.value = String(n);
+                    setValueBadge(String(n));
+                };
+
+                inputEl.addEventListener('input', syncFromInput);
+                inputEl.addEventListener('change', syncFromInput);
+
+                syncFromInput();
+            });
+        }
+
+        function renderProfileEditor(modelId, schema, values) {
+            const fields = Array.isArray(schema?.fields) ? schema.fields : [];
+            const notes = Array.isArray(schema?.notes) ? schema.notes : [];
+            const rows = fields.map((field) => {
+                const currentValue = values ? values[field.name] : undefined;
+                const desc = field.description || '';
+                const defaultText = field.default !== undefined && field.default !== ''
+                    ? ` Default: ${field.default}.`
+                    : '';
+                return `
+                    <div class="model-profile-row">
+                        <div class="model-profile-topline">
+                            <div class="model-profile-name">${escapeHtml(field.label || field.name || 'param')}</div>
+                            <div class="model-profile-scope">${escapeHtml(field.applies_at || 'generation')}</div>
+                        </div>
+                        ${renderProfileInput(modelId, field, currentValue)}
+                        <div class="model-profile-help">${escapeHtml(desc + defaultText)}</div>
+                    </div>
+                `;
+            }).join('');
+            const notesHtml = notes.length > 0
+                ? `<div class="model-profile-notes">${notes.map((note) => `<div class="model-profile-note">${escapeHtml(String(note))}</div>`).join('')}</div>`
+                : '';
+            return `
+                <div class="model-profile-grid">${rows}</div>
+                <div class="model-profile-actions">
+                    <button class="btn focusable" type="button" data-model-profile-save="${escapeHtml(modelId)}">Save Profile</button>
+                    <button class="btn load focusable" type="button" data-model-profile-apply="${escapeHtml(modelId)}">Save + Load</button>
+                    <button class="btn unload focusable" type="button" data-model-profile-reset="${escapeHtml(modelId)}">Reset Profile</button>
+                    <span id="model-profile-status" class="model-profile-status">Profile loaded.</span>
+                </div>
+                ${notesHtml}
+            `;
+        }
+
+        function collectModelProfileValues(modelId, schema) {
+            const fields = Array.isArray(schema?.fields) ? schema.fields : [];
+            const values = {};
+            for (const field of fields) {
+                const inputId = modelProfileInputId(modelId, field.name);
+                const el = document.getElementById(inputId);
+                if (!el) continue;
+                const raw = (el.value || '').trim();
+                if (raw === '') {
+                    values[field.name] = null;
+                    continue;
+                }
+                if (field.type === 'number') {
+                    const n = Number(raw);
+                    if (!Number.isFinite(n)) {
+                        throw new Error(`Invalid value for ${field.label || field.name}`);
+                    }
+                    if (field.min !== undefined && n < Number(field.min)) {
+                        throw new Error(`${field.label || field.name} must be >= ${field.min}`);
+                    }
+                    if (field.max !== undefined && n > Number(field.max)) {
+                        throw new Error(`${field.label || field.name} must be <= ${field.max}`);
+                    }
+                    values[field.name] = n;
+                    continue;
+                }
+                if (field.type === 'integer') {
+                    const n = Number(raw);
+                    if (!Number.isInteger(n)) {
+                        throw new Error(`${field.label || field.name} must be an integer`);
+                    }
+                    if (field.min !== undefined && n < Number(field.min)) {
+                        throw new Error(`${field.label || field.name} must be >= ${field.min}`);
+                    }
+                    if (field.max !== undefined && n > Number(field.max)) {
+                        throw new Error(`${field.label || field.name} must be <= ${field.max}`);
+                    }
+                    values[field.name] = n;
+                    continue;
+                }
+                if (field.type === 'enum') {
+                    values[field.name] = raw.toLowerCase();
+                    continue;
+                }
+                values[field.name] = raw;
+            }
+            return values;
+        }
+
+        async function loadModelProfileEditor(modelId) {
+            const host = document.getElementById('model-profile-shell');
+            const sourceHost = document.getElementById('model-source-truth-shell');
+            if (!host) return;
+            host.innerHTML = '<div class="endpoint-empty">Loading profile schema...</div>';
+            if (sourceHost) {
+                sourceHost.innerHTML = '<div class="endpoint-empty">Loading source-of-truth data...</div>';
+            }
+            try {
+                const [schema, profile] = await Promise.all([
+                    fetchModelProfileSchema(modelId),
+                    fetchModelProfileValues(modelId),
+                ]);
+                modelProfileSchemaCache.set(modelId, schema);
+                host.innerHTML = renderProfileEditor(modelId, schema, profile.values || {});
+                bindProfileRangeInputs(modelId, schema);
+                if (sourceHost) {
+                    sourceHost.innerHTML = renderSourceTruthPanel(modelId, schema, profile);
+                }
+                setModelProfileStatus('Profile loaded.');
+            } catch (e) {
+                host.innerHTML = `<div class="endpoint-empty" style="color:var(--led-red)">Profile load failed: ${escapeHtml(e.message || String(e))}</div>`;
+                if (sourceHost) {
+                    sourceHost.innerHTML = `<div class="endpoint-empty" style="color:var(--led-red)">Source-of-truth load failed: ${escapeHtml(e.message || String(e))}</div>`;
+                }
+            }
+        }
+
+        async function resetModelProfile(modelId) {
+            const resp = await fetch(`/models/${encodeURIComponent(modelId)}/profile`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({values: {}, replace: true}),
+            });
+            const payload = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(extractApiErrorMessage(payload, resp.status));
+            }
+            return payload;
+        }
+
+        async function saveModelProfile(modelId, loadModel = false) {
+            const schema = modelProfileSchemaCache.get(modelId);
+            if (!schema) {
+                throw new Error('Profile schema not loaded yet');
+            }
+            const values = collectModelProfileValues(modelId, schema);
+            const saveResp = await fetch(`/models/${encodeURIComponent(modelId)}/profile`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({values}),
+            });
+            const savePayload = await saveResp.json().catch(() => ({}));
+            if (!saveResp.ok) {
+                throw new Error(extractApiErrorMessage(savePayload, saveResp.status));
+            }
+            if (loadModel) {
+                const applyResp = await fetch(`/models/${encodeURIComponent(modelId)}/profile/apply`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({load_model: true}),
+                });
+                const applyPayload = await applyResp.json().catch(() => ({}));
+                if (!applyResp.ok) {
+                    throw new Error(extractApiErrorMessage(applyPayload, applyResp.status));
+                }
+                if (applyPayload.load && applyPayload.load.success === false) {
+                    throw new Error(`Model load failed (status ${applyPayload.load.status_code || 'unknown'})`);
+                }
+            }
+            return savePayload;
+        }
+
+        function setModalOpenState(isOpen) {
+            const modal = document.getElementById('model-modal');
+            if (!modal) return;
+            modal.classList.toggle('open', isOpen);
+            modal.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+            document.body.style.overflow = isOpen ? 'hidden' : '';
+        }
+
+        function updateModelModalLiveInfo(stale = false) {
+            const liveEl = document.getElementById('model-modal-live');
+            if (!liveEl || !activeModelModalId) return;
+            const refreshStamp = modelRegistryRefreshedAt ? new Date(modelRegistryRefreshedAt).toLocaleTimeString() : '-';
+            if (stale) {
+                liveEl.textContent = `Live registry: refresh failed · showing snapshot from ${refreshStamp}`;
+                liveEl.classList.add('stale');
+                return;
+            }
+            liveEl.textContent = `Live registry: updated ${refreshStamp} · auto-refresh 10s`;
+            liveEl.classList.remove('stale');
+        }
+
+        function closeModelModal() {
+            activeModelModalId = '';
+            setModalOpenState(false);
+            const liveEl = document.getElementById('model-modal-live');
+            if (liveEl) {
+                liveEl.textContent = 'Live registry: waiting for refresh...';
+                liveEl.classList.remove('stale');
+            }
+        }
+
+        function renderModelModal(modelId, shouldAnnounce = false) {
+            const model = modelRegistry.get(modelId);
+            if (!model) {
+                setModelActionStatus(`Model metadata unavailable for ${modelId}`, true);
+                return;
+            }
+            activeModelModalId = modelId;
+            const modalTitle = document.getElementById('model-modal-title');
+            const subtitle = document.getElementById('model-modal-subtitle');
+            const content = document.getElementById('model-modal-content');
+            if (!modalTitle || !subtitle || !content) return;
+
+            const status = model && model.status ? model.status : {};
+            const statusValue = status && status.value ? status.value : 'unknown';
+            const args = Array.isArray(status.args) ? status.args : [];
+            const refreshStamp = modelRegistryRefreshedAt ? new Date(modelRegistryRefreshedAt).toLocaleTimeString() : '-';
+
+            modalTitle.textContent = `Model Metadata :: ${modelId}`;
+            subtitle.textContent = `${modelId} :: llama.cpp runtime metadata`;
+            content.innerHTML = `
+                <div class="model-meta-grid">
+                    <div class="model-meta-item">
+                        <div class="model-meta-label">Model ID</div>
+                        <div class="model-meta-value">${escapeHtml(model.id || '-')}</div>
+                    </div>
+                    <div class="model-meta-item">
+                        <div class="model-meta-label">Object</div>
+                        <div class="model-meta-value">${escapeHtml(model.object || '-')}</div>
+                    </div>
+                    <div class="model-meta-item">
+                        <div class="model-meta-label">Owner</div>
+                        <div class="model-meta-value">${escapeHtml(model.owned_by || '-')}</div>
+                    </div>
+                    <div class="model-meta-item">
+                        <div class="model-meta-label">Created</div>
+                        <div class="model-meta-value">${escapeHtml(formatTimestampFromUnix(model.created))}</div>
+                    </div>
+                    <div class="model-meta-item">
+                        <div class="model-meta-label">Status</div>
+                        <div class="model-meta-value">${escapeHtml(statusValue)}</div>
+                    </div>
+                    <div class="model-meta-item">
+                        <div class="model-meta-label">Failed</div>
+                        <div class="model-meta-value">${escapeHtml(String(Boolean(status.failed)))}</div>
+                    </div>
+                    <div class="model-meta-item">
+                        <div class="model-meta-label">Args Count</div>
+                        <div class="model-meta-value">${escapeHtml(String(args.length))}</div>
+                    </div>
+                    <div class="model-meta-item">
+                        <div class="model-meta-label">Registry Refresh</div>
+                        <div class="model-meta-value">${escapeHtml(refreshStamp)}</div>
+                    </div>
+                    <div class="model-meta-item">
+                        <div class="model-meta-label">Source</div>
+                        <div class="model-meta-value">GET /models</div>
+                    </div>
+                </div>
+                <div class="panel-title">Runtime Args</div>
+                ${renderRuntimeArgs(args)}
+                <div class="panel-title">Source Of Truth</div>
+                <div id="model-source-truth-shell" class="model-source-shell">
+                    <div class="endpoint-empty">Loading source-of-truth data...</div>
+                </div>
+                <div class="panel-title">Model Profile (Generation + Runtime)</div>
+                <div id="model-profile-shell" class="model-profile-shell">
+                    <div class="endpoint-empty">Loading profile schema...</div>
+                </div>
+                <div class="panel-title">Raw Metadata Payload</div>
+                <div class="model-json-wrap">
+                    <pre class="model-json">${escapeHtml(JSON.stringify(model, null, 2))}</pre>
+                </div>
+            `;
+            setModalOpenState(true);
+            updateModelModalLiveInfo(false);
+            loadModelProfileEditor(modelId);
+            if (shouldAnnounce) {
+                announce(`${modelId} metadata opened.`);
+            }
+        }
+
+        function indexModelRegistry(models) {
+            modelRegistry.clear();
+            (Array.isArray(models) ? models : []).forEach((item) => {
+                if (!item || !item.id) return;
+                modelRegistry.set(String(item.id), item);
+            });
+            modelRegistryRefreshedAt = Date.now();
+            if (activeModelModalId && modelRegistry.has(activeModelModalId)) {
+                updateModelModalLiveInfo(false);
+            }
+        }
+
+        function endpointMethodClass(method) {
+            const m = String(method || '').toLowerCase();
+            if (m === 'get') return 'get';
+            if (m === 'post') return 'post';
+            if (m === 'delete') return 'delete';
+            return 'post';
+        }
+
+        function renderBackendEndpoints(backendName) {
+            const host = document.getElementById('backend-endpoint-groups');
+            const label = document.getElementById('endpoint-selected-backend');
+            if (!host || !label) return;
+
+            const spec = BACKEND_ENDPOINTS[backendName];
+            if (!spec) {
+                label.textContent = `${backendName || 'unknown'} :: no route map`;
+                host.innerHTML = `
+                    <div class="endpoint-empty">No API mapping is registered for this backend.</div>
+                    <div class="endpoint-group">
+                        <div class="endpoint-group-title">Ops</div>
+                        <div class="endpoint-row">
+                            <span class="ep-method get">GET</span>
+                            <span class="ep-path">/health</span>
+                        </div>
+                    </div>`;
+                updateEndpointTotal(1);
+                return;
+            }
+
+            label.textContent = `${spec.title} :: live route map`;
+            let total = 0;
+            host.innerHTML = spec.groups.map((group) => {
+                const routes = Array.isArray(group.routes) ? group.routes : [];
+                total += routes.length;
+                const rows = routes.map((route) => `
+                    <div class="endpoint-row">
+                        <span class="ep-method ${endpointMethodClass(route.method)}">${escapeHtml(route.method)}</span>
+                        <span class="ep-path">${escapeHtml(route.path)}</span>
+                    </div>`).join('');
+                return `
+                    <div class="endpoint-group">
+                        <div class="endpoint-group-title">${escapeHtml(group.title)}</div>
+                        ${rows}
+                    </div>`;
+            }).join('');
+            updateEndpointTotal(total);
+        }
+
+        function selectBackend(backendName, shouldAnnounce = false) {
+            if (!backendName) return;
+            selectedBackend = backendName;
+            document.querySelectorAll('.backend-card[data-backend]').forEach((card) => {
+                const isActive = card.getAttribute('data-backend') === backendName;
+                card.classList.toggle('active', isActive);
+                card.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            });
+            renderBackendEndpoints(backendName);
+            if (shouldAnnounce) {
+                announce(`${backendName} endpoints loaded.`);
+            }
+        }
+
+        function initializeBackendSelector() {
+            const cards = Array.from(document.querySelectorAll('.backend-card[data-backend]'));
+            if (cards.length === 0) {
+                renderBackendEndpoints('');
+                return;
+            }
+            const preferred = cards.find((card) => card.getAttribute('data-backend') === 'llama-router') || cards[0];
+            selectBackend(preferred.getAttribute('data-backend'));
+        }
+
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function statusClass(value, failed) {
+            if (failed) return 'failed';
+            if (value === 'loaded') return 'loaded';
+            if (value === 'loading') return 'loading';
+            if (value === 'unloading') return 'unloading';
+            if (value === 'unloaded') return 'unloaded';
+            return 'unknown';
+        }
+
+        function extractApiErrorMessage(payload, httpStatus) {
+            if (!payload) return `HTTP ${httpStatus}`;
+            if (typeof payload.detail === 'string') return payload.detail;
+            if (payload.error && typeof payload.error === 'string') return payload.error;
+            if (payload.ERROR && typeof payload.ERROR.message === 'string') return payload.ERROR.message;
+            if (payload.ERROR && typeof payload.ERROR.MESSAGE === 'string') return payload.ERROR.MESSAGE;
+            const fallback = JSON.stringify(payload);
+            return fallback && fallback !== '{}' ? fallback : `HTTP ${httpStatus}`;
+        }
+
+        function getRegistryModels() {
+            return Array.from(modelRegistry.values());
+        }
+
+
+        function setModelActionStatus(message, isError = false) {
+            const el = document.getElementById('model-action-status');
+            if (!el) return;
+            el.className = 'model-action-status' + (isError ? ' error' : '');
+            el.textContent = message;
+        }
+
+        function setModelButtonsDisabled(disabled) {
+            const buttons = document.querySelectorAll('button[data-model-action]');
+            buttons.forEach((button) => {
+                button.disabled = Boolean(disabled);
+            });
+        }
+
+        function applyHealthStaleState(message) {
+            const dot = document.getElementById('overall-dot');
+            if (dot) dot.className = 'led status-led stale';
+
+            const cards = document.querySelectorAll('[data-backend]');
+            cards.forEach((card) => {
+                const sd = card.querySelector('.led');
+                const st = card.querySelector('.backend-status');
+                if (sd) sd.className = 'led stale';
+                if (st) {
+                    const base = st.dataset.lastKnownStatus || st.textContent || 'Unknown';
+                    st.textContent = `${base} [STALE]`;
+                }
+            });
+
+            const info = document.getElementById('refresh-info');
+            if (info) info.textContent = `${message} · showing last known state`;
+
+            healthState.stale = true;
+        }
+
+
+        function renderModelsTable(models) {
+            const body = document.getElementById('models-table-body');
+            if (!body) return;
+            if (!Array.isArray(models) || models.length === 0) {
+                body.innerHTML = '<tr><td colspan="3" style="color:var(--text-tertiary)">No models registered in llama-router.</td></tr>';
+                return;
+            }
+            body.innerHTML = models.map((m) => {
+                const id = m && m.id ? String(m.id) : 'unknown';
+                const status = m && m.status ? m.status : {};
+                const statusValue = status.value || 'unknown';
+                const failed = Boolean(status.failed);
+                const pendingAction = modelPendingActions.get(id) || '';
+                let effectiveStatus = statusValue;
+                let effectiveFailed = failed;
+                if (pendingAction === 'load') {
+                    effectiveStatus = 'loading';
+                    effectiveFailed = false;
+                } else if (pendingAction === 'unload') {
+                    effectiveStatus = 'unloading';
+                    effectiveFailed = false;
+                }
+                const canLoad = !modelActionInFlight && !pendingAction && effectiveStatus !== 'loaded' && effectiveStatus !== 'loading';
+                const canUnload = !modelActionInFlight && !pendingAction && effectiveStatus === 'loaded';
+                return `<tr>
+                    <td><button class="model-link focusable" data-model-info="${escapeHtml(id)}" type="button">${escapeHtml(id)}</button></td>
+                    <td><span class="status-pill ${statusClass(effectiveStatus, effectiveFailed)}">${escapeHtml(effectiveFailed ? 'failed' : effectiveStatus)}</span></td>
+                    <td>
+                        <div class="model-actions">
+                            <button class="btn load" data-model-action="load" data-model-id="${escapeHtml(id)}" ${canLoad ? '' : 'disabled'}>Load</button>
+                            <button class="btn unload" data-model-action="unload" data-model-id="${escapeHtml(id)}" ${canUnload ? '' : 'disabled'}>Unload</button>
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function wait(ms) {
+            return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        async function waitForModelStatus(modelId, targetStatus, actionLabel, timeoutMs = 90000, intervalMs = 1500) {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+                await refreshModels(true);
+                const model = modelRegistry.get(modelId);
+                const status = model && model.status && model.status.value ? model.status.value : 'unknown';
+                const failed = Boolean(model && model.status && model.status.failed);
+                if (failed) {
+                    throw new Error(`validation failed (${status})`);
+                }
+                if (status === targetStatus) {
+                    return true;
+                }
+                setModelActionStatus(`${actionLabel} ${modelId}... validating (${status})`);
+                await wait(intervalMs);
+            }
+            return false;
+        }
+
+        async function refreshModels(force = false) {
+            const info = document.getElementById('models-refresh-info');
+            if (modelActionInFlight && !force) return;
+            const requestToken = ++modelsRequestToken;
+            if (modelsAbortController) {
+                modelsAbortController.abort();
+            }
+            modelsAbortController = new AbortController();
+
+            try {
+                const resp = await fetch('/models', {
+                    signal: modelsAbortController.signal,
+                    cache: 'no-store',
+                });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    const detail = data && data.detail ? data.detail : `HTTP ${resp.status}`;
+                    throw new Error(detail);
+                }
+
+                if (requestToken < latestModelsToken) return;
+                latestModelsToken = requestToken;
+
+                const models = Array.isArray(data.data) ? data.data : [];
+                indexModelRegistry(models);
+                renderModelsTable(models);
+                updateMobileModelBar();
+                const now = new Date();
+                if (info) {
+                    info.textContent = 'Last checked: ' + now.toLocaleTimeString() + ' · refreshes every 10s';
+                }
+
+                let loaded = 0;
+                let loading = 0;
+                let failed = 0;
+                models.forEach((item) => {
+                    const status = item && item.status ? item.status : {};
+                    if (status.failed) {
+                        failed += 1;
+                    } else if (status.value === 'loaded') {
+                        loaded += 1;
+                    } else if (status.value === 'loading') {
+                        loading += 1;
+                    }
+                });
+
+                modelState.loaded = loaded;
+                modelState.loading = loading;
+                modelState.failed = failed;
+                modelState.total = models.length;
+                modelState.stale = false;
+                modelState.lastSuccessMs = Date.now();
+                models.forEach((item) => {
+                    const id = item && item.id ? String(item.id) : '';
+                    if (!id) return;
+                    const pending = modelPendingActions.get(id);
+                    if (!pending) return;
+                    const value = item && item.status && item.status.value ? item.status.value : '';
+                    if ((pending === 'load' && value === 'loaded') || (pending === 'unload' && value === 'unloaded')) {
+                        modelPendingActions.delete(id);
+                    }
+                    if (item && item.status && item.status.failed) {
+                        modelPendingActions.delete(id);
+                    }
+                });
+                modelsStaleAnnounced = false;
+
+            } catch (e) {
+                if (e && e.name === 'AbortError') return;
+                if (requestToken < latestModelsToken) return;
+                latestModelsToken = requestToken;
+
+                if (info) {
+                    info.textContent = 'Model refresh failed · retrying in 10s';
+                }
+                setModelActionStatus('Model API unavailable: ' + e.message, true);
+                const body = document.getElementById('models-table-body');
+                if (body) {
+                    body.innerHTML = '<tr><td colspan="3" style="color:var(--led-red)">Failed to load /models.</td></tr>';
+                }
+
+
+                modelState.stale = true;
+
+                updateModelModalLiveInfo(true);
+                if (!modelsStaleAnnounced) {
+                    announce('Model telemetry is stale.');
+                    modelsStaleAnnounced = true;
+                }
+            }
+        }
+
+        async function runModelAction(action, modelId) {
+            if (modelActionInFlight) {
+                setModelActionStatus('Another model action is still running...');
+                return;
+            }
+            const actionUpper = action.toUpperCase();
+            const targetStatus = action === 'unload' ? 'unloaded' : 'loaded';
+            const requestBody = {model: modelId};
+            modelActionInFlight = true;
+            setModelButtonsDisabled(true);
+            modelPendingActions.set(modelId, action);
+            renderModelsTable(getRegistryModels());
+            setModelActionStatus(`${actionUpper} ${modelId}... in progress`);
+            try {
+                const resp = await fetch(`/models/${action}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(requestBody),
+                });
+                const payload = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    const detail = extractApiErrorMessage(payload, resp.status);
+                    const detailLc = String(detail).toLowerCase();
+                    if (action === 'unload' && detailLc.includes('model is not loaded')) {
+                        modelPendingActions.delete(modelId);
+                        setModelActionStatus(`${actionUpper} ${modelId}: already unloaded`);
+                        announce(`${modelId} was already unloaded.`);
+                        await refreshModels(true);
+                        return;
+                    }
+                    if (action === 'load' && detailLc.includes('already loaded')) {
+                        modelPendingActions.delete(modelId);
+                        setModelActionStatus(`${actionUpper} ${modelId}: already loaded`);
+                        announce(`${modelId} was already loaded.`);
+                        await refreshModels(true);
+                        return;
+                    }
+                    throw new Error(detail || `HTTP ${resp.status}`);
+                }
+                setModelActionStatus(`${actionUpper} ${modelId}: request accepted, validating...`);
+                const ok = await waitForModelStatus(modelId, targetStatus, actionUpper);
+                if (!ok) {
+                    throw new Error(`timed out waiting for ${targetStatus}`);
+                }
+                setModelActionStatus(`${actionUpper} ${modelId}: ${targetStatus}`);
+                announce(`${actionUpper} ${modelId} confirmed ${targetStatus}.`);
+            } catch (e) {
+                setModelActionStatus(`${actionUpper} ${modelId}: ${e.message}`, true);
+                announce(`${actionUpper} ${modelId} failed.`);
+                modelPendingActions.delete(modelId);
+            } finally {
+                await refreshModels(true);
+                modelActionInFlight = false;
+                modelPendingActions.delete(modelId);
+                renderModelsTable(getRegistryModels());
+                setModelButtonsDisabled(false);
+
+            }
+        }
+
+        function updateUptime() {
+            uptimeSeconds++;
+            const d = Math.floor(uptimeSeconds / 86400);
+            const h = Math.floor((uptimeSeconds % 86400) / 3600);
+            const m = Math.floor((uptimeSeconds % 3600) / 60);
+            const s = uptimeSeconds % 60;
+            const parts = [];
+            if (d) parts.push(d + 'd');
+            if (h) parts.push(h + 'h');
+            if (m) parts.push(m + 'm');
+            parts.push(s + 's');
+            document.getElementById('uptime').textContent = parts.join(' ');
+        }
+
+        async function refreshHealth() {
+            const requestToken = ++healthRequestToken;
+            if (healthAbortController) {
+                healthAbortController.abort();
+            }
+            healthAbortController = new AbortController();
+
+            try {
+                const resp = await fetch('/health', {
+                    signal: healthAbortController.signal,
+                    cache: 'no-store',
+                });
+                const data = await resp.json();
+
+                if (requestToken < latestHealthToken) return;
+                latestHealthToken = requestToken;
+
+                const dot = document.getElementById('overall-dot');
+                dot.className = 'led status-led ' + (data.status === 'healthy' ? 'healthy' : 'degraded');
+                const backends = data.backends || {};
+                const backendEntries = Object.entries(backends);
+                let healthyCount = 0;
+
+                if (data.status !== 'healthy' && !healthStaleAnnounced) {
+                    announce('Gateway health degraded.');
+                    healthStaleAnnounced = true;
+                }
+
+                for (const [name, info] of Object.entries(backends)) {
+                    const card = document.querySelector('[data-backend="' + name + '"]');
+                    if (!card) continue;
+                    const sd = card.querySelector('.led');
+                    const st = card.querySelector('.backend-status');
+                    const status = info.status || 'unreachable';
+                    if (status === 'healthy') healthyCount += 1;
+                    sd.className = 'led ' + status;
+                    let label = status.charAt(0).toUpperCase() + status.slice(1);
+                    if (info.code) label += ' (' + info.code + ')';
+                    if (info.error) label += ' \u2014 ' + info.error.substring(0, 60);
+                    st.textContent = label;
+                    st.dataset.lastKnownStatus = label;
+                    const mc = document.querySelector('[data-chip-backend="' + name + '"] .chip-led');
+                    if (mc) mc.className = 'chip-led ' + status;
+                }
+                const now = new Date();
+                document.getElementById('refresh-info').textContent =
+                    'Last checked: ' + now.toLocaleTimeString() + ' \u00b7 refreshes every 30s';
+
+                healthState.status = data.status === 'healthy' ? 'healthy' : 'degraded';
+                healthState.healthy = healthyCount;
+                healthState.total = backendEntries.length;
+                healthState.stale = false;
+                healthState.lastSuccessMs = Date.now();
+                if (data.status === 'healthy') {
+                    healthStaleAnnounced = false;
+                }
+                renderMobileHealthChips();
+
+            } catch (e) {
+                if (e && e.name === 'AbortError') return;
+                if (requestToken < latestHealthToken) return;
+                latestHealthToken = requestToken;
+                applyHealthStaleState('Health refresh failed');
+                if (!healthStaleAnnounced) {
+                    announce('Health telemetry is stale.');
+                    healthStaleAnnounced = true;
+                }
+            }
+        }
+
+        document.addEventListener('click', (event) => {
+            /* --- Mobile: overflow button --- */
+            if (event.target.closest('#mobile-overflow-btn')) {
+                const c = document.getElementById('bs-overflow-content');
+                if (c) {
+                    const links = document.querySelector('.quick-links.inline');
+                    c.innerHTML = links ? links.outerHTML : '';
+                }
+                openBottomSheet('bs-overflow');
+                return;
+            }
+
+            /* --- Mobile: health chip tap --- */
+            const healthChip = event.target.closest('.mobile-health-chip[data-chip-backend]');
+            if (healthChip && isMobile()) {
+                const backendName = healthChip.getAttribute('data-chip-backend');
+                const card = document.querySelector('.backend-card[data-backend="' + backendName + '"]');
+                const bsC = document.getElementById('bs-health-content');
+                if (card && bsC) {
+                    const dot = card.querySelector('.led');
+                    const dotCls = dot ? dot.className.replace('led', '').trim() : 'checking';
+                    const statusText = (card.querySelector('.backend-status') || {}).textContent || '';
+                    const healthUrl = (card.querySelector('.backend-health-url') || {}).textContent || '';
+                    const ep = BACKEND_ENDPOINTS[backendName];
+                    let epHtml = '';
+                    if (ep) {
+                        epHtml = ep.groups.map(g =>
+                            '<div class="endpoint-group"><div class="endpoint-group-title">' + escapeHtml(g.title) + '</div>' +
+                            g.routes.map(r => '<div class="endpoint-row"><span class="ep-method">' + escapeHtml(r.method) + '</span><span class="ep-path">' + escapeHtml(r.path) + '</span></div>').join('') +
+                            '</div>'
+                        ).join('');
+                    }
+                    bsC.innerHTML =
+                        '<div class="backend-card" style="cursor:default;margin-bottom:0.75rem">' +
+                        '<div class="backend-name"><span class="led ' + dotCls + '"></span>' + escapeHtml(backendName) + '</div>' +
+                        '<div class="backend-status">' + escapeHtml(statusText) + '</div>' +
+                        '<div class="backend-health-url">' + escapeHtml(healthUrl) + '</div></div>' +
+                        epHtml;
+                }
+                openBottomSheet('bs-health');
+                return;
+            }
+
+            /* --- Mobile: model bar tap --- */
+            if (event.target.closest('#mobile-model-bar') && isMobile()) {
+                const bsC = document.getElementById('bs-models-content');
+                const src = document.querySelector('.dashboard-grid > .panel:last-child');
+                if (bsC && src) {
+                    while (src.firstChild) bsC.appendChild(src.firstChild);
+                    bsC.dataset.sourcePanel = '1';
+                }
+                openBottomSheet('bs-models');
+                return;
+            }
+
+            const modalCloseBtn = event.target.closest('#model-modal-close');
+            if (modalCloseBtn) {
+                closeModelModal();
+                return;
+            }
+
+            const modalBackdrop = event.target.closest('#model-modal');
+            if (modalBackdrop && event.target === modalBackdrop) {
+                closeModelModal();
+                return;
+            }
+
+            const profileSaveBtn = event.target.closest('button[data-model-profile-save]');
+            if (profileSaveBtn) {
+                const modelId = profileSaveBtn.getAttribute('data-model-profile-save');
+                if (!modelId) return;
+                setModelProfileStatus('Saving profile...');
+                saveModelProfile(modelId, false)
+                    .then(async () => {
+                        setModelProfileStatus('Profile saved.');
+                        await refreshModels(true);
+                        await loadModelProfileEditor(modelId);
+                        announce(`Profile saved for ${modelId}.`);
+                    })
+                    .catch((e) => {
+                        setModelProfileStatus(`Save failed: ${e.message}`, true);
+                    });
+                return;
+            }
+
+            const profileApplyBtn = event.target.closest('button[data-model-profile-apply]');
+            if (profileApplyBtn) {
+                const modelId = profileApplyBtn.getAttribute('data-model-profile-apply');
+                if (!modelId) return;
+                setModelProfileStatus('Saving and loading model...');
+                saveModelProfile(modelId, true)
+                    .then(async () => {
+                        setModelProfileStatus('Profile applied and model load requested.');
+                        await refreshModels(true);
+                        await loadModelProfileEditor(modelId);
+                        announce(`Profile applied for ${modelId}.`);
+                    })
+                    .catch((e) => {
+                        setModelProfileStatus(`Apply failed: ${e.message}`, true);
+                    });
+                return;
+            }
+
+            const profileResetBtn = event.target.closest('button[data-model-profile-reset]');
+            if (profileResetBtn) {
+                const modelId = profileResetBtn.getAttribute('data-model-profile-reset');
+                if (!modelId) return;
+                setModelProfileStatus('Resetting profile...');
+                resetModelProfile(modelId)
+                    .then(async () => {
+                        setModelProfileStatus('Profile reset.');
+                        await refreshModels(true);
+                        await loadModelProfileEditor(modelId);
+                        announce(`Profile reset for ${modelId}.`);
+                    })
+                    .catch((e) => {
+                        setModelProfileStatus(`Reset failed: ${e.message}`, true);
+                    });
+                return;
+            }
+
+            const backendCard = event.target.closest('.backend-card[data-backend]');
+            if (backendCard) {
+                const backendName = backendCard.getAttribute('data-backend');
+                if (backendName) {
+                    selectBackend(backendName, true);
+                }
+                return;
+            }
+
+            const modelInfoBtn = event.target.closest('button[data-model-info]');
+            if (modelInfoBtn) {
+                const modelId = modelInfoBtn.getAttribute('data-model-info');
+                if (modelId) {
+                    renderModelModal(modelId, true);
+                }
+                return;
+            }
+
+            const btn = event.target.closest('button[data-model-action]');
+            if (!btn) return;
+            const action = btn.getAttribute('data-model-action');
+            const modelId = btn.getAttribute('data-model-id');
+            if (!action || !modelId) return;
+            runModelAction(action, modelId);
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                if (activeBottomSheet) { closeAllBottomSheets(); return; }
+                closeModelModal();
+                return;
+            }
+            const backendCard = event.target.closest('.backend-card[data-backend]');
+            if (!backendCard) return;
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            const backendName = backendCard.getAttribute('data-backend');
+            if (backendName) {
+                selectBackend(backendName, true);
+            }
+        });
+
+        document.getElementById('refresh-models-btn').addEventListener('click', () => {
+            refreshModels();
+        });
+
+        initializeBackendSelector();
+        initTerminalControls();
+        initMobileFilter();
+        connectTerminalFeed();
+        setInterval(updateUptime, 1000);
+        setInterval(refreshHealth, 30000);
+        setInterval(refreshModels, 10000);
+        setTimeout(refreshHealth, 100);
+        setTimeout(refreshModels, 200);
+
+        /* --- Bottom sheet backdrop + drag-to-dismiss --- */
+        document.getElementById('bs-backdrop')?.addEventListener('click', closeAllBottomSheets);
+        document.querySelectorAll('[data-bs-handle]').forEach(handle => {
+            handle.addEventListener('touchstart', (e) => {
+                bsDragStartY = e.touches[0].clientY;
+                bsDragging = true;
+                const sheet = handle.closest('.bottom-sheet');
+                if (sheet) sheet.style.transition = 'none';
+            }, { passive: true });
+        });
+        document.addEventListener('touchmove', (e) => {
+            if (!bsDragging) return;
+            bsDragCurrentY = e.touches[0].clientY;
+            const dy = Math.max(0, bsDragCurrentY - bsDragStartY);
+            const sheet = document.querySelector('.bottom-sheet.open');
+            if (sheet) sheet.style.transform = 'translateY(' + dy + 'px)';
+        }, { passive: true });
+        document.addEventListener('touchend', () => {
+            if (!bsDragging) return;
+            bsDragging = false;
+            const dy = bsDragCurrentY - bsDragStartY;
+            const sheet = document.querySelector('.bottom-sheet.open');
+            if (sheet) {
+                sheet.style.transition = '';
+                sheet.style.transform = '';
+                if (dy > 80) closeAllBottomSheets();
+            }
+        });
+
+        /* --- Mobile init + resize --- */
+        renderMobileHealthChips();
+        updateMobileModelBar();
+        let mobileResizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(mobileResizeTimer);
+            mobileResizeTimer = setTimeout(() => {
+                renderMobileHealthChips();
+                updateMobileModelBar();
+                if (!isMobile()) closeAllBottomSheets();
+            }, 250);
+        });
+    </script>
+</body>
+</html>
