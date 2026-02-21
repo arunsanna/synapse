@@ -29,11 +29,11 @@ spec:
               name: http
           resources:
             requests:
-              memory: 2Gi
-              cpu: "1"
+              memory: 4Gi
+              cpu: "2"
             limits:
-              memory: 8Gi
-              cpu: "4"
+              memory: 32Gi  # 1hr@48kHz float32 stereo + STFT = ~17GB peak
+              cpu: "6"
           startupProbe:
             httpGet:
               path: /health

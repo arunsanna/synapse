@@ -13,9 +13,9 @@ TIMEOUTS = {
     "llm": 300.0,
     "embeddings": 60.0,
     "tts": 120.0,
-    "stt": 120.0,
-    "speaker": 120.0,
-    "audio": 60.0,
+    "stt": 600.0,
+    "speaker": 600.0,
+    "audio": 600.0,
     "default": 60.0,
 }
 
