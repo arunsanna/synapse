@@ -1,0 +1,6 @@
+faster-whisper
+fastapi
+pydantic-settings
+uvicorn[standard]
+python-multipart
+sse-starlette

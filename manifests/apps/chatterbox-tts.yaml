@@ -10,7 +10,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate  # CPU-only until PyTorch supports RTX 5090 (sm_120)
+    type: Recreate  # GPU time-sliced; avoid double memory during rollout
   selector:
     matchLabels:
       app: chatterbox-tts
@@ -22,9 +22,7 @@ spec:
     spec:
       containers:
         - name: chatterbox
-          # CPU build: RTX 5090 (Blackwell/sm_120) not yet supported by stable PyTorch
-          # Switch to ghcr.io/devnen/chatterbox-tts-server:latest + nvidia.com/gpu: "1"
-          # once PyTorch stable ships sm_120 kernels
+          # GPU blocked: upstream PyTorch lacks sm_120 (Blackwell) kernels
           image: registry.arunlabs.com/chatterbox-tts-server:cpu-latest
           imagePullPolicy: IfNotPresent
           ports:
@@ -37,6 +35,7 @@ spec:
             limits:
               memory: 16Gi
               cpu: "8"
+              # nvidia.com/gpu: "1"  # Re-enable when PyTorch supports sm_120
           volumeMounts:
             - name: model-cache
               mountPath: /app/model_cache

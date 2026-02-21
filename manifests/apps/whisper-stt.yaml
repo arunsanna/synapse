@@ -10,7 +10,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate  # CPU-only; avoid double memory during rollout
+    type: Recreate  # GPU time-sliced; avoid double memory during rollout
   selector:
     matchLabels:
       app: whisper-stt
@@ -31,9 +31,9 @@ spec:
             - name: WHISPER_MODEL_SIZE
               value: large-v3-turbo
             - name: WHISPER_DEVICE
-              value: cpu
+              value: cuda
             - name: WHISPER_COMPUTE_TYPE
-              value: int8
+              value: float16
             - name: WHISPER_MODEL_CACHE_DIR
               value: /cache/huggingface
           resources:
@@ -43,6 +43,7 @@ spec:
             limits:
               memory: 12Gi
               cpu: "6"
+              nvidia.com/gpu: "1"
           volumeMounts:
             - name: model-cache
               mountPath: /cache/huggingface
