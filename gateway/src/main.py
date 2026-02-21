@@ -296,6 +296,38 @@ async def terminal_feed_events(request: Request):
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
 
+@app.get("/api/backend-routes", include_in_schema=False)
+async def backend_routes():
+    """Return route-to-backend mapping from the gateway config, grouped by backend."""
+    config = get_backends_config()
+    raw_routes = config.get("routes", {})
+    backends_cfg = config.get("backends", {})
+
+    # Group routes by target backend
+    grouped: dict[str, list[dict]] = {}
+    for path, target_backend in raw_routes.items():
+        method = "POST" if any(
+            path.startswith(p) for p in ("/v1/chat", "/v1/embed", "/models/load",
+                                          "/models/unload", "/tts/", "/stt/",
+                                          "/speakers/", "/audio/")
+        ) else "GET"
+        grouped.setdefault(target_backend, []).append({"method": method, "path": path})
+
+    # Build response keyed by backend name
+    result = {}
+    for name in backends_cfg:
+        routes = grouped.get(name, [])
+        health_path = backends_cfg[name].get("health", "/health")
+        result[name] = {
+            "title": name,
+            "groups": [
+                {"title": "Gateway Routes", "routes": routes},
+                {"title": "Ops", "routes": [{"method": "GET", "path": health_path}]},
+            ],
+        }
+    return result
+
+
 @app.get("/dashboard", include_in_schema=False, response_class=HTMLResponse)
 async def dashboard():
     """Self-contained HTML status dashboard with live health monitoring."""
