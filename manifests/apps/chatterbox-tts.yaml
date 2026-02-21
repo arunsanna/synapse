@@ -22,20 +22,26 @@ spec:
     spec:
       containers:
         - name: chatterbox
-          # GPU blocked: upstream PyTorch lacks sm_120 (Blackwell) kernels
-          image: registry.arunlabs.com/chatterbox-tts-server:cpu-latest
+          # Custom build: PyTorch 2.10+cu128 on CUDA 12.8.1 (sm_120 Blackwell)
+          image: registry.arunlabs.com/chatterbox-tts-server:latest
           imagePullPolicy: IfNotPresent
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: pyannote-hf-token
+                  key: HF_TOKEN
           ports:
             - containerPort: 8004
               name: http
           resources:
             requests:
               memory: 4Gi
-              cpu: "4"
+              cpu: "2"
             limits:
               memory: 16Gi
-              cpu: "8"
-              # nvidia.com/gpu: "1"  # Re-enable when PyTorch supports sm_120
+              cpu: "4"
+              nvidia.com/gpu: "1"
           volumeMounts:
             - name: model-cache
               mountPath: /app/model_cache
