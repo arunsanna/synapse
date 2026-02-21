@@ -22,7 +22,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate  # CPU-only; avoid double memory during rollout
+    type: Recreate  # GPU time-sliced; avoid double memory during rollout
   selector:
     matchLabels:
       app: pyannote-speaker
@@ -41,7 +41,7 @@ spec:
               name: http
           env:
             - name: SPEAKER_DEVICE
-              value: cpu
+              value: cuda
             - name: SPEAKER_HF_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -54,6 +54,7 @@ spec:
             limits:
               memory: 12Gi
               cpu: "6"
+              nvidia.com/gpu: "1"
           volumeMounts:
             - name: model-cache
               mountPath: /cache/huggingface
